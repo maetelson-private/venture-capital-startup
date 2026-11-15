@@ -80,6 +80,7 @@ v_companies  업력·누적투자금·첫 투자일·팁스·특허 수 등 계�
 | 소스 | 명령 | 채우는 칸 | 키 |
 |---|---|---|---|
 | **공고·보도자료 첨부 명단** (실험실창업탐색팀, 학생창업유망팀, 혁신창업멤버스, 규제샌드박스, 혁신의료기기 보도자료 등) | `notice URL --kind program\|sandbox\|innov --program 이름 --year 연도` | 프로그램 선정·지원금 / 규제샌드박스 / 혁신의료기기 | ANTHROPIC_API_KEY |
+| **게시판 자동 순회** (식약처 보도자료·공지, 과기정통부 보도자료, 산업부 보도자료) | `boards [--pages 3] [--only 식약처] [--dry-run]` | 위 `notice` 와 같음. 선정·지정·승인 공고만 골라 자동 처리 | ANTHROPIC_API_KEY |
 | **업계 언론 RSS** (벤처스퀘어·스타트업레시피·와우테일·플래텀·히트뉴스·모비인사이드) | `feeds [매체…]` | 기업·라운드·투자사·BM·고객·지불주체·PoC·프로그램 (신뢰도 중) | ANTHROPIC_API_KEY |
 | 식약처 혁신의료기기 지정 현황 API | `mfds` | 혁신의료기기 지정 | DATA_GO_KR_KEY + 이 API 활용신청 |
 | 뉴스 검색 (네이버 API, 없으면 구글뉴스 RSS 제목) | `news`, `article URL…` | 위와 같음. 키가 없으면 규칙 기반(신뢰도 하) | NAVER_* (선택) |
@@ -100,6 +101,14 @@ python -m hcdb notice 학생창업유망팀_선정결과.hwp --kind program --pr
 
 `javascript:` 로 내려받는 게시판(첨부 링크가 스크립트 함수인 곳)은 자동으로 못 받는다. 그런 곳은 파일을 받아 경로로 넣는다.
 
+### 게시판 자동 순회 (`boards`)
+게시판별 최근 N페이지와(검색되는 곳은) 키워드 검색 결과를 훑어, 제목 규칙에 맞는 선정·지정·승인 공고만 `notice` 로 넘긴다. 한 번 처리한 게시글은 다시 처리하지 않으니 주 1회 돌리면 새 공고만 들어온다. 제목 규칙(`RULES`)이 kind 와 프로그램명을 정한다(예: '실험실창업' → program/실험실창업탐색팀, '혁신의료기기…지정' → innov, '규제특례…승인' → sandbox).
+
+```bash
+python -m hcdb boards --dry-run      # 무엇을 처리할지 먼저 확인
+python -m hcdb boards                # 실제 처리
+```
+
 ### 연구실 페이지 추가하기
 사이트마다 구조가 달라 CSS 선택자 설정으로 붙인다. `config/labs.example.json` 을 `config/labs.json` 으로 복사해서 항목을 추가하고, 먼저 `labs --dry-run` 으로 추출 결과를 확인한다. JS 로 그려지는 페이지는 `"render": true` (최초 1회 `playwright install chromium` 필요).
 
@@ -110,7 +119,7 @@ python -m hcdb notice 학생창업유망팀_선정결과.hwp --kind program --pr
 robots.txt 준수, 같은 호스트에 2초 간격, 같은 URL 은 30일 캐시. 구글뉴스 기사 링크는 robots 로 막혀 있어 제목·요약만 저장한다.
 
 ## 다음에 붙이면 좋은 것
-- **게시판 목록 자동 순회**: 지금 `notice` 는 게시글 URL 하나씩 넣는다. 식약처·과기정통부·K-Startup 게시판을 검색어로 훑어 새 선정 공고를 찾아 `notice` 로 넘기는 단계를 붙이면 완전 자동이 된다.
+- **게시판 추가**: `hcdb/sources/boards.py` 의 `BOARDS` 에 한 줄 추가하면 된다. 교육부(학생창업유망팀)는 게시글을 JS 함수로 열어 직접 URL 을 못 만들고, K-Startup 은 자동 접속을 끊어서 아직 빠져 있다. 과기정통부는 검색이 안 돼 최근 N페이지만 본다.
 - **채용공고 수**: 원티드·사람인 공개 검색 결과 개수를 `job_posting_snapshots` 에 월 1회 저장.
 - **FIRST 연결**: FIRST 투자사 장부를 `investors.grp/type` 에, G1 딜 시트를 별도 테이블로 넣고 `cb_market` 으로 조인하면 `g1_same_market_cnt` 를 자동 계산할 수 있다.
 - **하드 필터 기준**: `config.py` 의 `MAX_AGE_YEARS` / `DEEPTECH_EXTRA_YEARS` / `MAX_VALUATION_KRW` 를 실제 기준에 맞게 수정.

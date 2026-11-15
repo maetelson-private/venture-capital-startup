@@ -2,7 +2,7 @@
 import argparse
 
 from . import db, export, filters
-from .sources import dart, kipris, lab, manual, mfds, news, notice, nps, nts
+from .sources import boards, dart, kipris, lab, manual, mfds, news, notice, nps, nts
 
 
 def main(argv=None):
@@ -44,6 +44,11 @@ def main(argv=None):
     s.add_argument("--operator", help="주관·운영 기관")
     s.add_argument("--all", action="store_true", help="헬스케어 아닌 팀도 저장")
     s.add_argument("--dry-run", action="store_true")
+
+    s = sp.add_parser("boards", help="식약처·과기정통부·산업부 게시판 순회 → 선정·지정·승인 공고 자동 수집")
+    s.add_argument("--pages", type=int, default=3, help="게시판별 최근 몇 페이지 (기본 3)")
+    s.add_argument("--only", nargs="*", help="게시판 이름 일부 (예: 식약처)")
+    s.add_argument("--dry-run", action="store_true", help="찾은 공고 목록만 보기")
 
     s = sp.add_parser("nps", help="국민연금 가입사업장 CSV 가져오기")
     s.add_argument("csv")
@@ -94,6 +99,8 @@ def main(argv=None):
             kipris.run(con)
         case "nps":
             nps.run(con, a.csv)
+        case "boards":
+            boards.run(con, a.pages, a.only, a.dry_run)
         case "mfds":
             mfds.run(con)
         case "notice":

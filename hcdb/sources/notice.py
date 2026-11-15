@@ -61,6 +61,9 @@ def run(con, src: str, kind: str, program: str | None = None, year: int | None =
     for e in entries:
         uniq.setdefault((e.name.strip(), (e.ceo or "").strip()), e)
     entries = list(uniq.values())
+    # 병원·대학·공공기관은 공동 신청자로 명단에 섞여 나오지만 스타트업이 아니므로 제외
+    _inst = re.compile(r"병원$|의료원$|대학교$|대학$|산학협력단|재단$|진흥원$|공단$|연구원$|센터$|협회$|^(국립|한국).*(원|공사)$")
+    entries = [e for e in entries if not _inst.search(e.name.strip())]
     health = [e for e in entries if keep_all or e.is_health]
     print(f"명단 {len(entries)}건 중 헬스케어 {len([e for e in entries if e.is_health])}건")
     if dry_run:
