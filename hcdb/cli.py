@@ -37,7 +37,9 @@ def main(argv=None):
     s.add_argument("--years", type=int, default=3)
     sp.add_parser("kipris", help="KIPRIS 특허 (KIPRIS_KEY)")
 
-    sp.add_parser("mfds", help="식약처 혁신의료기기 지정 현황 (DATA_GO_KR_KEY + 활용신청)")
+    s = sp.add_parser("mfds", help="식약처 API: 혁신의료기기 지정 + 소프트웨어 의료기기 품목허가 (DATA_GO_KR_KEY)")
+    s.add_argument("--only", choices=["innov", "sw"], help="하나만 실행")
+    s.add_argument("--kw", nargs="*", default=["소프트웨어"], help="품목명 키워드 (기본: 소프트웨어)")
 
     s = sp.add_parser("notice", help="공고·보도자료 URL/파일 → 첨부 명단 추출 (ANTHROPIC_API_KEY)")
     s.add_argument("src", help="게시글 URL 또는 로컬 HWP/HWPX/PDF/XLSX 파일")
@@ -116,7 +118,10 @@ def main(argv=None):
         case "boards":
             boards.run(con, a.pages, a.only, a.dry_run)
         case "mfds":
-            mfds.run(con)
+            if a.only != "sw":
+                mfds.run(con)
+            if a.only != "innov":
+                mfds.run_sw(con, tuple(a.kw))
         case "notice":
             notice.run(con, a.src, a.kind, a.program, a.year, a.operator, a.all, a.dry_run)
         case "labs":

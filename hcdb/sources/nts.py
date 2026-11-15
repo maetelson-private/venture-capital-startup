@@ -7,6 +7,21 @@ URL = "https://api.odcloud.kr/api/nts-businessman/v1/status"
 _MAP = {"01": "계속", "02": "휴업", "03": "폐업"}
 
 
+def _post(nos: list[str], tries: int = 4) -> dict:
+    """국세청 API 는 간헐적으로 503 이 나서 재시도. 실패 메시지에 키가 찍히지 않게 한다."""
+    import time
+
+    import requests
+    for k in range(tries):
+        try:
+            return http_post_json(URL, {"b_no": nos}, params={"serviceKey": config.DATA_GO_KR_KEY})
+        except (requests.ConnectionError, requests.HTTPError, requests.Timeout) as e:
+            code = getattr(getattr(e, "response", None), "status_code", "연결 실패")
+            if k == tries - 1:
+                raise SystemExit(f"국세청 API 응답 없음({code}). 잠시 후 `python -m hcdb nts` 를 다시 실행하세요") from None
+            time.sleep(10 * (k + 1))
+
+
 def run(con) -> None:
     if not config.DATA_GO_KR_KEY:
         raise SystemExit("DATA_GO_KR_KEY 가 .env 에 없습니다 (data.go.kr 에서 무료 발급)")
@@ -15,7 +30,7 @@ def run(con) -> None:
     with db.run_log(con, "nts") as st:
         nos = list(by_no)
         for i in range(0, len(nos), 100):
-            res = http_post_json(URL, {"b_no": nos[i:i + 100]}, params={"serviceKey": config.DATA_GO_KR_KEY})
+            res = _post(nos[i:i + 100])
             for d in res.get("data", []):
                 cid = by_no.get(d.get("b_no"))
                 status = _MAP.get(d.get("b_stt_cd"), "미상")

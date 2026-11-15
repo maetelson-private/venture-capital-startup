@@ -44,7 +44,9 @@ def run_log(con, source: str, args: str = ""):
     try:
         yield stats
     except Exception as e:  # noqa: BLE001
-        err = repr(e)
+        # 오류 메시지의 URL 에 API 키가 들어 있으면 가려서 저장
+        import re
+        err = re.sub(r"(?i)(servicekey|crtfc_key|api_key)=[^&'\" ]+", r"\1=***", repr(e))
         raise
     finally:
         con.execute(
