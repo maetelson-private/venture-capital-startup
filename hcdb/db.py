@@ -24,6 +24,7 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
 _MIGRATIONS = [
     ("patents", "ipc", "TEXT"),
     ("patents", "applicants", "TEXT"),
+    ("companies", "one_liner", "TEXT"),
 ]
 
 

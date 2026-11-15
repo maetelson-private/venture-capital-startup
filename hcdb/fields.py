@@ -26,6 +26,7 @@ COMPANY_FIELDS: dict[str, str] = {
     "target_area": "Target Area",
     "scope": "범위 판정",
     "scope_reason": "판정 근거",
+    "one_liner": "한 줄 설명",
     "bm_summary": "BM 한 줄",
     "service_summary": "서비스 한 줄",
     "headcount": "인원 수",
@@ -81,6 +82,7 @@ TAG_FIELDS: dict[str, str] = {
     "kw_task": "키워드(과제)",
     "kw_means": "키워드(수단)",
     "kw_customer": "키워드(고객)",
+    "kw": "키워드",
     "program": "참여 프로그램",
 }
 

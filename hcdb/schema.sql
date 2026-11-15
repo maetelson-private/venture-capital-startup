@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS companies (
     target_area         TEXT,                     -- GTCM Mash-up 결과
     scope               TEXT CHECK (scope IN ('포함','제외','보류')),
     scope_reason        TEXT,
+    one_liner           TEXT,                     -- 카드용 한 줄 설명 (40자 안팎)
     bm_summary          TEXT,
     service_summary     TEXT,
     -- 고객·지불주체·키워드는 다중값이라 company_tags 에 저장
