@@ -1,0 +1,4 @@
+requests>=2.31
+beautifulsoup4>=4.12
+openpyxl>=3.1
+playwright>=1.40   # JS 렌더링 페이지용(선택). 설치 후 `playwright install chromium`

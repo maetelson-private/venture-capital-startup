@@ -1,0 +1,16 @@
+[
+  {
+    "name": "예시) OO대학교 실험실창업 지원팀 목록",
+    "url": "https://example.ac.kr/startup/teams",
+    "render": false,
+    "item": "div.team-card",
+    "fields": {
+      "name": "h3",
+      "affiliation": ".lab-name",
+      "service_summary": "p.desc",
+      "url": "a@href"
+    },
+    "defaults": {"is_pre_startup": 1, "program": "실험실창업"},
+    "keyword_filter": true
+  }
+]
