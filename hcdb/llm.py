@@ -98,6 +98,38 @@ def extract_roster(text: str, context: str = "") -> list[RosterEntry] | None:
     return out
 
 
+class ScopeItem(BaseModel):
+    id: int
+    scope: str = Field(description="포함 / 제외 / 보류 중 하나")
+    reason: str = Field(description="한 줄 근거")
+
+
+class ScopeBatch(BaseModel):
+    items: list[ScopeItem]
+
+
+SCOPE_SYSTEM = (
+    "너는 디지털 헬스케어 스타트업 DB의 수집 범위를 판정한다. 기준:\n"
+    "- 포함: 의료·건강 문제를 소프트웨어·AI·데이터·디바이스·플랫폼으로 푸는 회사. 디지털치료제, 의료 AI·영상진단, "
+    "원격·비대면 진료, 의료기기(진단·모니터링·치료·재활 기기 포함), 웨어러블 건강 측정, 병원·보험·제약 대상 헬스 IT, "
+    "정신건강·만성질환 관리 서비스, 의료 데이터·마이데이터, 시니어케어 테크.\n"
+    "- 보류: 신약·바이오 소재처럼 디지털 요소가 없는 바이오, 웰니스·피트니스·영양제처럼 의료 경계에 있는 소비자 서비스, "
+    "정보가 너무 적어 판단이 어려운 곳.\n"
+    "- 제외: 반려동물, 화장품·스킨케어, 식품, 일반 IT·SaaS, 의료와 무관한 회사, 병원·대학·공공기관·대기업.\n"
+    "주어진 정보만으로 판정하고, 근거는 한 줄로 쓴다."
+)
+
+
+def classify_scope(rows: list[dict]) -> list[ScopeItem] | None:
+    """rows: [{id, name, info}] 를 한 번에 판정."""
+    client = _client()
+    if client is None:
+        return None
+    text = "\n".join(f"[{r['id']}] {r['name']} — {r['info'] or '(정보 없음)'}" for r in rows)
+    r = _parse(client, SCOPE_SYSTEM, f"아래 회사들을 각각 판정해줘. id 를 그대로 돌려줘.\n\n{text}", ScopeBatch)
+    return r.items if r else None
+
+
 class CompanyFacts(BaseModel):
     found: bool = False
     founded_date: str = ""     # YYYY-MM-DD / YYYY-MM / YYYY

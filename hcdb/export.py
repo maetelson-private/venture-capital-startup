@@ -11,6 +11,14 @@ from . import config
 from .fields import COMPANY_FIELDS, TAG_FIELDS, VIEW_FIELDS
 
 SHEETS = {
+    # 바로 볼 목록: 하드필터 통과 + 범위 포함. 투자 이력 없는 곳(첫 투자 후보)을 위로, 최근 설립 순
+    "롱리스트": """SELECT id 기업ID, name 사명, founded_date 설립일, age_years 업력, sido 시도, ceo 대표,
+                   service_summary 서비스, n_rounds 기투자횟수, investor_names 투자사,
+                   (SELECT group_concat(value, ', ') FROM company_tags t WHERE t.company_id=v.id AND kind='program') 프로그램,
+                   (SELECT group_concat(kind || ':' || coalesce(product,''), '; ') FROM regulatory g WHERE g.company_id=v.id) 제도신호,
+                   url 홈페이지, scope_reason 범위근거, hard_filter_reason 필터사유, confidence 신뢰도
+                FROM v_companies v WHERE hard_filter='통과' AND scope='포함'
+                ORDER BY (n_rounds > 0), founded_date IS NULL, founded_date DESC""",
     "투자라운드": """SELECT c.name 사명, r.round 라운드, r.announced_date 일자, r.amount_krw 금액_원,
                     (SELECT group_concat(i.name) FROM round_investors ri JOIN investors i ON i.id=ri.investor_id
                      WHERE ri.round_id=r.id) 투자사, r.confidence 신뢰도, r.source_url 출처
@@ -56,6 +64,7 @@ def run(con, out: str | None = None, template=False) -> Path:
     wb = Workbook()
     ws = wb.active
     ws.title = "기업"
+    # 롱리스트를 첫 시트로 (아래에서 만든 뒤 맨 앞으로 이동)
     # 기업 시트: 기업 ID → 단일값 칸 → 태그 칸 → 계산 칸
     # 고객·지불주체·키워드는 아래 태그 칸에서 kind 별로 따로 보여주므로 VIEW 의 합친 칸은 뺌
     view_cols = [c for c in VIEW_FIELDS if c not in ("id", "customers", "payers", "keywords")]
@@ -76,6 +85,8 @@ def run(con, out: str | None = None, template=False) -> Path:
         for name, sql in SHEETS.items():
             cur = con.execute(sql)
             _write(wb.create_sheet(name), [d[0] for d in cur.description], cur.fetchall())
+        wb.move_sheet("롱리스트", offset=-wb.sheetnames.index("롱리스트"))
+        wb.active = 0
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     print(f"저장: {path}")

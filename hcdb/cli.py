@@ -2,7 +2,7 @@
 import argparse
 
 from . import db, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, kipris, lab, manual, mfds, news, notice, nps, nts
+from .sources import boards, dart, enrich, kbic, portfolio, scope, kipris, lab, manual, mfds, news, notice, nps, nts
 
 
 def main(argv=None):
@@ -72,6 +72,9 @@ def main(argv=None):
     s.add_argument("--limit", type=int)
     s.add_argument("--workers", type=int, default=4)
 
+    s = sp.add_parser("scope", help="Claude 로 범위 판정 (포함/제외/보류)")
+    s.add_argument("--redo", action="store_true", help="수기(manual) 판정 외에는 다시 판정")
+
     sp.add_parser("filter", help="하드 필터 재판정")
 
     s = sp.add_parser("export", help="엑셀로 내보내기")
@@ -126,6 +129,8 @@ def main(argv=None):
             portfolio.run(con)
         case "enrich":
             enrich.run(con, a.limit, a.workers)
+        case "scope":
+            scope.run(con, a.redo)
         case "filter":
             filters.run(con)
         case "export":
