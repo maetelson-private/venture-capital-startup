@@ -82,6 +82,7 @@ v_companies  업력·누적투자금·첫 투자일·팁스·특허 수 등 계�
 | **공고·보도자료 첨부 명단** (실험실창업탐색팀, 학생창업유망팀, 혁신창업멤버스, 규제샌드박스, 혁신의료기기 보도자료 등) | `notice URL --kind program\|sandbox\|innov --program 이름 --year 연도` | 프로그램 선정·지원금 / 규제샌드박스 / 혁신의료기기 | ANTHROPIC_API_KEY |
 | **게시판 자동 순회** (식약처 보도자료·공지, 과기정통부 보도자료, 산업부 보도자료) | `boards [--pages 3] [--only 식약처] [--dry-run]` | 위 `notice` 와 같음. 선정·지정·승인 공고만 골라 자동 처리 | ANTHROPIC_API_KEY |
 | **업계 언론 RSS** (벤처스퀘어·스타트업레시피·와우테일·플래텀·히트뉴스·모비인사이드) | `feeds [매체…]` | 기업·라운드·투자사·BM·고객·지불주체·PoC·프로그램 (신뢰도 중) | ANTHROPIC_API_KEY |
+| **빈칸 보강 (Claude 웹 검색)** | `enrich [--limit N]` | 설립일이 빈 기업의 설립일·대표·홈페이지·시도 (출처 URL 기록, 신뢰도 중) | ANTHROPIC_API_KEY |
 | 식약처 혁신의료기기 지정 현황 API | `mfds` | 혁신의료기기 지정 | DATA_GO_KR_KEY + 이 API 활용신청 |
 | 뉴스 검색 (네이버 API, 없으면 구글뉴스 RSS 제목) | `news`, `article URL…` | 위와 같음. 키가 없으면 규칙 기반(신뢰도 하) | NAVER_* (선택) |
 | 국세청 사업자 상태조회 | `nts` | 영업 상태·사업자등록 여부 | DATA_GO_KR_KEY |

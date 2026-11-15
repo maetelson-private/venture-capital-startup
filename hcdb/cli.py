@@ -2,7 +2,7 @@
 import argparse
 
 from . import db, export, filters
-from .sources import boards, dart, kipris, lab, manual, mfds, news, notice, nps, nts
+from .sources import boards, dart, enrich, kipris, lab, manual, mfds, news, notice, nps, nts
 
 
 def main(argv=None):
@@ -61,6 +61,10 @@ def main(argv=None):
     s.add_argument("file")
     s.add_argument("--sheet")
 
+    s = sp.add_parser("enrich", help="설립일 빈 기업을 Claude 웹 검색으로 보강 (ANTHROPIC_API_KEY)")
+    s.add_argument("--limit", type=int)
+    s.add_argument("--workers", type=int, default=4)
+
     sp.add_parser("filter", help="하드 필터 재판정")
 
     s = sp.add_parser("export", help="엑셀로 내보내기")
@@ -109,6 +113,8 @@ def main(argv=None):
             lab.run(con, a.config, a.dry_run)
         case "import":
             manual.run(con, a.file, a.sheet)
+        case "enrich":
+            enrich.run(con, a.limit, a.workers)
         case "filter":
             filters.run(con)
         case "export":

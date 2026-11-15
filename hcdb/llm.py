@@ -98,6 +98,57 @@ def extract_roster(text: str, context: str = "") -> list[RosterEntry] | None:
     return out
 
 
+class CompanyFacts(BaseModel):
+    found: bool = False
+    founded_date: str = ""     # YYYY-MM-DD / YYYY-MM / YYYY
+    ceo: str = ""
+    url: str = ""
+    sido: str = ""
+    source_url: str = ""
+    evidence: str = ""         # 근거 문장 (짧게)
+
+
+FACTS_SYSTEM = (
+    "너는 한국 기업의 설립일을 웹에서 확인하는 조사원이다. 회사 홈페이지(회사소개·연혁), 기업정보 사이트, "
+    "기사에서 '설립', '창립', '법인 설립' 표기를 찾는다. 동명의 다른 회사와 혼동하지 않도록 힌트(제품·분야)와 맞는지 확인한다. "
+    "확인하지 못하면 found=false 로 두고 추측하지 않는다."
+)
+
+
+def find_company_facts(name: str, hint: str = "") -> CompanyFacts | None:
+    """웹 검색(서버 도구)으로 설립일·대표·홈페이지를 찾는다. 검색 3회 이내."""
+    import json as _json
+    import re as _re
+    client = _client()
+    if client is None:
+        return None
+    defaults = {bool: False, int: 0, str: ""}
+    skel = _json.dumps({k: defaults.get(f.annotation, "") for k, f in CompanyFacts.model_fields.items()},
+                       ensure_ascii=False)
+    messages = [{"role": "user", "content":
+                 f"회사: {name}\n힌트: {hint}\n\n이 회사의 설립일(법인 설립일)과 대표자, 홈페이지, 본사 시·도를 찾아줘. "
+                 f"마지막에 아래 키를 가진 JSON 객체 하나만 출력해. source_url 은 설립일 근거 페이지.\n{skel}"}]
+    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 3}]
+    for _ in range(4):  # pause_turn 이어가기
+        resp = client.messages.create(model=MODEL, max_tokens=8000, system=FACTS_SYSTEM, tools=tools,
+                                      output_config={"effort": "low"}, messages=messages)
+        if resp.stop_reason != "pause_turn":
+            break
+        messages.append({"role": "assistant", "content": resp.content})
+    if resp.stop_reason == "refusal":
+        return None
+    text = "".join(b.text for b in resp.content if b.type == "text")
+    m = None
+    for m in _re.finditer(r"\{[^{}]*\}", text, _re.S):
+        pass  # 마지막 JSON 객체
+    if not m:
+        return None
+    try:
+        return CompanyFacts.model_validate_json(m.group(0))
+    except ValueError:
+        return None
+
+
 ARTICLE_SYSTEM = (
     "너는 한국 스타트업 투자 기사에서 사실을 칸별로 옮기는 도구다. 기사에 적힌 것만 쓰고, 없으면 빈 문자열·0·빈 목록으로 둔다. "
     "투자사와 주인공 기업을 혼동하지 않는다. 금액은 원 단위 정수로 쓴다."
