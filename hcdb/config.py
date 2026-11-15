@@ -43,8 +43,11 @@ CACHE_TTL_DAYS = 30          # 같은 URL 재수집 주기
 RESPECT_ROBOTS = True
 
 # 하드 필터 기준 — 블루포인트/FIRST 기준에 맞게 조정
-MAX_AGE_YEARS = 7            # 기본 업력 한도
-DEEPTECH_EXTRA_YEARS = 5     # 딥테크 연장
+MAX_AGE_YEARS = 5            # 기본 업력 한도 (2026-11-15 결정)
+DEEPTECH_EXTRA_YEARS = 5     # 딥테크 연장. 롱리스트 단계에선 자동 판정 안 함 — 엑셀에서 직접 '딥테크 여부'=1 로 표시한 곳만 적용
+# 값이 없을 때: 롱리스트 단계에선 떨어뜨리지 않고 '통과(확인 필요)'로 둔다
+PASS_IF_VALUATION_UNKNOWN = True
+PASS_IF_FOUNDED_UNKNOWN = True
 MAX_VALUATION_KRW = 5_000_000_000  # 추정 밸류 50억
 
 # 신뢰도 우선순위. manual(사람이 확인한 값)은 항상 우선

@@ -19,9 +19,18 @@ def judge(row) -> tuple[str, str]:
         reasons.append(f"추정 밸류 {row['est_valuation_krw'] / 1e8:.0f}억 > {config.MAX_VALUATION_KRW / 1e8:.0f}억")
     if reasons:
         return "탈락", "; ".join(reasons)
-    if hold:
+    # 미상 항목: 설정에 따라 통과(확인 필요) 또는 보류
+    passable = {"설립일 미상": config.PASS_IF_FOUNDED_UNKNOWN, "밸류 미상": config.PASS_IF_VALUATION_UNKNOWN}
+    if any(not passable[h] for h in hold):
         return "보류", "; ".join(hold)
-    return "통과", f"업력 {row['age_years']}년, 밸류 {row['est_valuation_krw'] / 1e8:.0f}억"
+    known = []
+    if row["age_years"] is not None:
+        known.append(f"업력 {row['age_years']}년")
+    if row["est_valuation_krw"] is not None:
+        known.append(f"밸류 {row['est_valuation_krw'] / 1e8:.0f}억")
+    if hold:
+        return "통과", "확인 필요: " + ", ".join(hold) + (f" ({', '.join(known)})" if known else "")
+    return "통과", ", ".join(known)
 
 
 def run(con) -> None:
