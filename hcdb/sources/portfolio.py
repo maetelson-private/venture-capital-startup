@@ -32,6 +32,43 @@ def dhp() -> list[dict]:
     return out
 
 
+DCAMP_URL = "https://dcamp.kr/startups"
+
+
+def dcamp() -> list[dict]:
+    """D.CAMP 스타트업: 페이지 안 `const startups=[...]` JSON. 사업자번호·설립일·업종·투자 여부 포함."""
+    import json
+    r = http_get(DCAMP_URL)
+    r.encoding = "utf-8"
+    m = re.search(r"const\s+startups\s*=\s*(\[.*?\]);", r.text, re.S)
+    return json.loads(m.group(1)) if m else []
+
+
+def run_dcamp(con) -> None:
+    items = [x for x in dcamp() if "헬스케어" in (x.get("industry_main") or "") or "바이오" in (x.get("industry_main") or "")]
+    print(f"D.CAMP 바이오/헬스케어 {len(items)}곳")
+    with db.run_log(con, "portfolio:dcamp") as st:
+        for x in items:
+            name = (x.get("name_ko") or x.get("name_en") or "").strip()
+            if not name:
+                continue
+            cid = db.get_or_create_company(con, name, x.get("business_registration_number"), DCAMP_URL)
+            db.add_alias(con, cid, x.get("name_en"), DCAMP_URL)
+            db.set_fields(con, cid, {
+                "biz_no": x.get("business_registration_number"), "founded_date": x.get("founding_date"),
+                "ceo": x.get("representative_name"), "url": x.get("homepage_url"),
+                "service_summary": " — ".join(filter(None, [x.get("service_name"), x.get("service_description")]))[:300] or None,
+            }, "portfolio:dcamp", DCAMP_URL, "상")
+            if x.get("industry_sub"):
+                db.add_tag(con, cid, "kw_means", x["industry_sub"], DCAMP_URL)
+            db.add_tag(con, cid, "program", "D.CAMP " + (x.get("family_group_label") or "입주"), DCAMP_URL)
+            if x.get("has_investment"):
+                db.add_round(con, cid, "D.CAMP 투자", None, None, ["디캠프"], DCAMP_URL, "상")
+            st["facts"] += 1
+        con.commit()
+    print(f"{st['facts']}곳 반영")
+
+
 def run(con, korea_only=True) -> None:
     items = dhp()
     if korea_only:

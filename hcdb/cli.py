@@ -2,7 +2,7 @@
 import argparse
 
 from . import cards, db, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, scope, kipris, lab, manual, mfds, news, notice, nps, nts
+from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts
 
 
 def main(argv=None):
@@ -38,7 +38,7 @@ def main(argv=None):
     sp.add_parser("kipris", help="KIPRIS 특허 (KIPRIS_KEY)")
 
     s = sp.add_parser("mfds", help="식약처 API: 혁신의료기기 지정 + 소프트웨어 의료기기 품목허가 (DATA_GO_KR_KEY)")
-    s.add_argument("--only", choices=["innov", "sw"], help="하나만 실행")
+    s.add_argument("--only", choices=["innov", "sw", "mnft"], help="하나만 실행 (mnft=제조·수입업 허가로 기존 기업 보강)")
     s.add_argument("--kw", nargs="*", default=["소프트웨어"], help="품목명 키워드 (기본: 소프트웨어)")
 
     s = sp.add_parser("notice", help="공고·보도자료 URL/파일 → 첨부 명단 추출 (ANTHROPIC_API_KEY)")
@@ -68,7 +68,9 @@ def main(argv=None):
 
     s = sp.add_parser("kbic", help="보건산업혁신창업센터 창업기업 (~300개사, 디지털헬스케어·의료기기)")
     s.add_argument("--all", action="store_true", help="의약품 분야도 포함")
-    sp.add_parser("portfolio", help="헬스케어 투자사 포트폴리오 (DHP) → 이미 투자받음 표시")
+    s = sp.add_parser("portfolio", help="포트폴리오·보육 기업 (DHP, D.CAMP) → 이미 투자받음 표시")
+    s.add_argument("--only", choices=["dhp", "dcamp"])
+    sp.add_parser("tips", help="TIPS 선정기업 중 헬스케어·바이오의료 (공개 API) → 이미 투자받음 표시")
 
     s = sp.add_parser("enrich", help="설립일 빈 기업을 Claude 웹 검색으로 보강 (ANTHROPIC_API_KEY)")
     s.add_argument("--limit", type=int)
@@ -121,10 +123,12 @@ def main(argv=None):
         case "boards":
             boards.run(con, a.pages, a.only, a.dry_run)
         case "mfds":
-            if a.only != "sw":
+            if a.only in (None, "innov"):
                 mfds.run(con)
-            if a.only != "innov":
+            if a.only in (None, "sw"):
                 mfds.run_sw(con, tuple(a.kw))
+            if a.only == "mnft":
+                mfds.run_mnft(con)
         case "notice":
             notice.run(con, a.src, a.kind, a.program, a.year, a.operator, a.all, a.dry_run)
         case "labs":
@@ -134,7 +138,12 @@ def main(argv=None):
         case "kbic":
             kbic.run(con, a.all)
         case "portfolio":
-            portfolio.run(con)
+            if a.only != "dcamp":
+                portfolio.run(con)
+            if a.only != "dhp":
+                portfolio.run_dcamp(con)
+        case "tips":
+            tips.run(con)
         case "enrich":
             enrich.run(con, a.limit, a.workers)
         case "scope":

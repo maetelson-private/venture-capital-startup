@@ -102,6 +102,31 @@ def run_sw(con, keywords=("소프트웨어",), recent_years: int = 5) -> None:
     print(f"SW 의료기기 허가 업체 {len(by_co)}곳 → 신규 {new}곳 추가, 기존 {existing}곳에 허가 이력 연결")
 
 
+def run_mnft(con) -> None:
+    """의료기기 제조·수입업 허가(1.6만 건)를 훑어, DB 에 이미 있는 회사에만 '제조업 허가' 이력과 휴·폐업을 붙인다.
+    업체명만으로는 디지털 여부를 알 수 없어 새 시드로는 넣지 않는다."""
+    src = "https://www.data.go.kr/data/15073895/openapi.do"
+    hit = 0
+    with db.run_log(con, "mfds-mnft") as st:
+        for batch in _pages(MNFT_URL, {}, max_pages=400):
+            for it in batch:
+                cid = db.find_company(con, it.get("BSSH_NM") or "")
+                if cid is None:
+                    continue
+                db.upsert_row(con, "regulatory", {
+                    "company_id": cid, "product": f"의료기기 {it.get('COB_FLAG_CODE_NAME') or ''}",
+                    "kind": f"{it.get('COB_FLAG_CODE_NAME') or '제조·수입'}허가", "status": it.get("PERMIT_STATE_CODE_NAME"),
+                    "event_date": norm_date(it.get("PRMSN_YMD")), "source_url": src})
+                closed = it.get("SHUTDOWN_CLOSE_REOPEN_NAME")
+                if closed in ("폐업", "휴업"):
+                    db.set_field(con, cid, "biz_status", closed, "mfds-mnft", src, "중")
+                hit += 1
+            st["docs"] += 1
+            con.commit()
+        st["facts"] = hit
+    print(f"제조·수입업 허가 중 DB 기업과 일치 {hit}건")
+
+
 def run(con) -> None:
     if not config.DATA_GO_KR_KEY:
         raise SystemExit("DATA_GO_KR_KEY 가 없습니다")

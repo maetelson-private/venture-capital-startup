@@ -21,6 +21,10 @@ def _display(name: str) -> str:
 def _first_sentence(s: str | None, n: int = 70) -> str:
     if not s:
         return ""
+    # TIPS 소개문 "OO는 △△ 분야에서 '과제명'을 전개하는 기업입니다" → 과제명만
+    m = re.search(r"분야에서\s*[‘'\"“](.+?)[’'\"”]\s*[을를]\s*전개", s)
+    if m:
+        s = m.group(1)
     s = re.split(r"(?<=[.다])\s", s.strip())[0]
     return s if len(s) <= n else s[: n - 1] + "…"
 
