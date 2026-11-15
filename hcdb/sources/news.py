@@ -121,8 +121,53 @@ def extract(text: str, title: str | None = None) -> dict:
     return out
 
 
+def apply_article(con, doc: dict, a, require_health=True) -> int:
+    """Claude 추출 결과(llm.Article) → DB. 신뢰도 '중'."""
+    if not a.is_startup_news or not a.company or (require_health and not a.is_health):
+        return 0
+    url, n = doc["url"], 0
+    cid = db.get_or_create_company(con, a.company, source_url=url)
+    db.add_alias(con, cid, a.company_en, url)
+    con.execute("INSERT OR IGNORE INTO doc_company_links VALUES (?,?)", (doc["id"], cid))
+    n += db.set_fields(con, cid, {
+        "ceo": a.ceo, "name_en": a.company_en, "bm_summary": a.bm_summary, "service_summary": a.service_summary,
+        "headcount": a.headcount or None, "founded_date": f"{a.founded_year}-01-01" if a.founded_year else None,
+    }, "news-llm", url, "중")
+    for t in a.customers:
+        db.add_tag(con, cid, "customer", t, url)
+    for t in a.payers:
+        db.add_tag(con, cid, "payer", t, url)
+    if a.round or a.amount_krw:
+        rid = db.add_round(con, cid, a.round or None, doc.get("published_at"), a.amount_krw or None,
+                           a.investors, url, "중")
+        if a.lead_investor:
+            iid = db.get_or_create_investor(con, a.lead_investor)
+            con.execute("INSERT OR REPLACE INTO round_investors VALUES (?,?,1)", (rid, iid))
+        n += 1
+    for p in a.partners:
+        db.upsert_row(con, "partners", {"company_id": cid, "partner_name": p, "relation": "PoC·파트너",
+                                        "source_url": url, "confidence": "중"})
+    for prog in a.programs:
+        db.add_tag(con, cid, "program", prog, url)
+        is_tips = "팁스" in prog or "TIPS" in prog.upper()
+        db.upsert_row(con, "grants", {"company_id": cid, "program": "TIPS" if is_tips else prog,
+                                      "year": int((doc.get("published_at") or "0000")[:4]) or None,
+                                      "operator": a.tips_operator if is_tips else None,
+                                      "source_url": url, "confidence": "중"})
+    if a.regulatory:
+        db.set_field(con, cid, "regulatory_status", a.regulatory, "news-llm", url, "하")
+    con.execute("UPDATE companies SET confidence=coalesce(confidence,'중') WHERE id=?", (cid,))
+    return n + 1
+
+
 def process_doc(con, doc: dict, require_health=True) -> int:
-    """수집된 기사 1건 → DB 반영. 반영한 fact 수 반환."""
+    """수집된 기사 1건 → DB 반영. 반영한 fact 수 반환.
+    ANTHROPIC_API_KEY 가 있으면 Claude 추출(본문이 충분할 때), 없으면 규칙 기반."""
+    if config.ANTHROPIC_API_KEY and len(doc.get("body") or "") > 200:
+        from .. import llm
+        a = llm.extract_article(doc.get("title") or "", doc["body"])
+        con.execute("UPDATE raw_documents SET processed=1 WHERE id=?", (doc["id"],))
+        return apply_article(con, doc, a, require_health) if a else 0
     ex = extract(doc["body"] or "", doc.get("title"))
     if require_health and not ex["health"]:
         con.execute("UPDATE raw_documents SET processed=1 WHERE id=?", (doc["id"],))
@@ -170,6 +215,66 @@ def run(con, queries=None, pages=1, limit=None) -> None:
             if not doc["processed"]:
                 st["facts"] += process_doc(con, doc)
             con.commit()
+        print(f"기사 {st['docs']}건 처리, fact {st['facts']}건 반영")
+
+
+# ───────────── 업계 언론 RSS (6단계: 노출) ─────────────
+# 피드 본문(content:encoded)이 있으면 그걸 쓰고, 없으면 robots 가 허용할 때만 기사 페이지를 가져온다.
+FEEDS = {
+    "벤처스퀘어": "https://www.venturesquare.net/feed",
+    "스타트업레시피": "https://startuprecipe.co.kr/feed",
+    "와우테일": "https://wowtale.net/feed/",
+    "플래텀": "https://platum.kr/feed",
+    "히트뉴스": "https://www.hitnews.co.kr/rss/allArticle.xml",
+    "모비인사이드": "https://www.mobiinside.co.kr/feed/",
+}
+_SIGNAL = re.compile(r"투자|유치|선정|팁스|TIPS|시드|시리즈|프리A|데모데이|액셀러레이팅|혁신의료기기|실증특례|PoC|MOU", re.I)
+_CONTENT = "{http://purl.org/rss/1.0/modules/content/}encoded"
+
+
+def _feed_items(url: str) -> list[dict]:
+    r = http_get(url, check_robots=False)
+    out = []
+    for it in ET.fromstring(r.content).iter("item"):
+        raw = it.findtext(_CONTENT) or it.findtext("description") or ""
+        body = html.unescape(re.sub(r"<[^>]+>", " ", raw))
+        pub = it.findtext("pubDate")
+        try:
+            date = parsedate_to_datetime(pub).date().isoformat() if pub else None
+        except (TypeError, ValueError):
+            date = (pub or "")[:10] or None
+        out.append({"url": it.findtext("link"), "title": (it.findtext("title") or "").strip(),
+                    "body": re.sub(r"\s+", " ", body).strip(), "date": date})
+    return out
+
+
+def run_feeds(con, names: list[str] | None = None) -> None:
+    with db.run_log(con, "news-rss", repr(names)) as st:
+        for name, url in FEEDS.items():
+            if names and name not in names:
+                continue
+            try:
+                items = _feed_items(url)
+            except Exception as e:  # noqa: BLE001
+                print(f"[{name}] 피드 실패: {e}")
+                continue
+            hits = [h for h in items if _SIGNAL.search(h["title"] + h["body"][:500])
+                    and _HEALTH.search(h["title"] + h["body"][:1500])]
+            print(f"[{name}] {len(items)}건 중 헬스케어·투자 신호 {len(hits)}건")
+            for h in hits:
+                if con.execute("SELECT 1 FROM raw_documents WHERE url=? AND processed=1", (h["url"],)).fetchone():
+                    continue
+                if len(h["body"]) < 300:  # 피드에 요약만 있으면 페이지를 가져옴 (robots 허용 시)
+                    doc = fetch_doc(con, h["url"], "news-rss")
+                    if not doc:
+                        continue
+                else:
+                    con.execute("INSERT OR IGNORE INTO raw_documents(url, source, title, published_at, body) "
+                                "VALUES (?,?,?,?,?)", (h["url"], f"rss:{name}", h["title"], h["date"], h["body"]))
+                    doc = dict(con.execute("SELECT * FROM raw_documents WHERE url=?", (h["url"],)).fetchone())
+                st["docs"] += 1
+                st["facts"] += process_doc(con, doc)
+                con.commit()
         print(f"기사 {st['docs']}건 처리, fact {st['facts']}건 반영")
 
 

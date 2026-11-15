@@ -6,7 +6,7 @@ SQLite 한 파일(`data/startups.db`) + Python 스크립트. 서버 없이 로�
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # API 키 입력 (없는 소스는 건너뜀)
+cp .env.example .env          # API 키 입력 (없는 소스는 건너뜀, 발급 방법은 아래)
 python -m hcdb init
 python -m hcdb news --limit 50               # 뉴스 검색 → 기사 수집 → 기업·라운드 추출
 python -m hcdb import 내가정리한파일.xlsx      # 수기 입력분 반영
@@ -19,6 +19,32 @@ python -m hcdb stats
 ```
 
 DB 를 직접 보고 싶으면 [DB Browser for SQLite](https://sqlitebrowser.org/) 또는 `pip install datasette && datasette data/startups.db`.
+
+## API 키 발급
+
+모두 무료예요. Claude API만 사용량만큼 과금돼요. 키는 `.env` 에만 두고 커밋하지 않아요(`.gitignore` 에 포함).
+
+| 키 | 발급처 | 방법 | 쓰는 곳 |
+|---|---|---|---|
+| `DATA_GO_KR_KEY` | data.go.kr | 회원가입 → 아래 API 를 하나씩 검색해 **활용신청** → 마이페이지 > 개발계정 > '일반 인증키(Decoding)' 복사. 대부분 자동 승인이지만 실제로 호출되기까지 1~2시간 걸리기도 함 | 국세청 상태조회, 국민연금 가입사업장, K-Startup 공고, 식약처 의료기기 허가·임상 |
+| `KIPRIS_KEY` | plus.kipris.or.kr | 회원가입 → 서비스 신청에서 '특허·실용신안 정보' 계열 상품 신청 → 승인 후 마이페이지에서 키 확인. 무료 호출 한도가 있으니 신청 화면에서 확인 | 특허 출원인·발명자 |
+| `NTIS_KEY` | ntis.go.kr | 회원가입 → 국가R&D 정보 Open API 활용 신청(사용 목적 기재) → 승인 후 발급 | 국가R&D 과제 수행기관 |
+| `DART_KEY` | opendart.fss.or.kr | 인증키 신청 → 이메일 인증 → 즉시 발급 | 기업개황·결산 |
+| `NAVER_CLIENT_ID/SECRET` | developers.naver.com | Application 등록 → 사용 API '검색' 선택 → Client ID/Secret 발급 (하루 25,000회) | 뉴스 검색 |
+| `ANTHROPIC_API_KEY` | console.anthropic.com | 결제수단 등록 → API Keys → Create Key | 기사·HWP·PDF 명단 추출 (선택) |
+
+data.go.kr 에서 활용신청할 API (검색창에 아래 이름을 넣으면 나와요. 정확한 상품명은 포털에서 다시 확인하세요):
+- `국세청_사업자등록정보 진위확인 및 상태조회 서비스`
+- `국민연금공단_국민연금 가입 사업장 내역` (API 와 월별 파일데이터 둘 다 있음)
+- `창업진흥원_K-Startup` 조회서비스 (사업공고)
+- `식품의약품안전처_의료기기 품목허가 정보`, 의료기기 임상시험 승인 관련 API
+
+### 키 없이 가져오는 원천
+API 가 없어서 페이지 크롤링이나 첨부파일 파싱으로 가져와요.
+- **공고·보도자료 첨부(HWP·PDF)**: 실험실창업탐색팀, 학생창업유망팀, 보건산업혁신창업센터, 서울바이오허브, 식약처 혁신의료기기 지정 공고, 규제샌드박스 승인과제. 명단이 대부분 첨부파일에 있어 첨부파일 파서가 필요해요(아직 미구현).
+- **HTML 페이지**: 병원 인큐베이터, 넥스트유니콘 공고 목록, DHP 프로그램, 업계 언론(메디게이트뉴스·데일리팜·메디칼타임즈·벤처스퀘어·와우테일). `labs` 설정 방식으로 붙여요.
+- **파일 다운로드**: 벤처확인기업 목록(벤처확인종합관리시스템), 기업부설연구소 현황(한국산업기술진흥협회).
+- **수기·필터용**: THE VC, 혁신의숲, 스타트업레시피는 공개 API 가 없어서 이미 투자받았는지 확인하는 용도로만 써요. 수기 `import` 로 넣어요. 원티드·로켓펀치 채용 공고는 검색 결과 개수만 월 1회 기록해요.
 
 ## DB 구성
 
@@ -53,13 +79,26 @@ v_companies  업력·누적투자금·첫 투자일·팁스·특허 수 등 계�
 
 | 소스 | 명령 | 채우는 칸 | 키 |
 |---|---|---|---|
-| 뉴스 (네이버 검색 API, 없으면 구글뉴스 RSS 제목) | `news`, `article URL…` | 사명·대표·라운드·금액·투자사 (신뢰도 하) | NAVER_* (선택) |
+| **공고·보도자료 첨부 명단** (실험실창업탐색팀, 학생창업유망팀, 혁신창업멤버스, 규제샌드박스, 혁신의료기기 보도자료 등) | `notice URL --kind program\|sandbox\|innov --program 이름 --year 연도` | 프로그램 선정·지원금 / 규제샌드박스 / 혁신의료기기 | ANTHROPIC_API_KEY |
+| **업계 언론 RSS** (벤처스퀘어·스타트업레시피·와우테일·플래텀·히트뉴스·모비인사이드) | `feeds [매체…]` | 기업·라운드·투자사·BM·고객·지불주체·PoC·프로그램 (신뢰도 중) | ANTHROPIC_API_KEY |
+| 식약처 혁신의료기기 지정 현황 API | `mfds` | 혁신의료기기 지정 | DATA_GO_KR_KEY + 이 API 활용신청 |
+| 뉴스 검색 (네이버 API, 없으면 구글뉴스 RSS 제목) | `news`, `article URL…` | 위와 같음. 키가 없으면 규칙 기반(신뢰도 하) | NAVER_* (선택) |
 | 국세청 사업자 상태조회 | `nts` | 영업 상태·사업자등록 여부 | DATA_GO_KR_KEY |
 | OpenDART | `dart` | 사업자번호·설립일·대표·홈페이지·결산 | DART_KEY |
 | KIPRIS Plus | `kipris` | 특허 출원·등록·PCT | KIPRIS_KEY |
 | 국민연금 가입사업장 CSV (월별 파일) | `nps 파일.csv` | 월별 인원·신규·상실 | 없음 (data.go.kr 파일 다운로드) |
 | 연구실·창업 프로그램 페이지 | `labs --config config/labs.json` | 예비창업팀·소속·서비스 | 없음 |
 | 수기 (LinkedIn·원티드·IR·데모데이 자료 등) | `import 파일` | 아무 칸 | 없음 |
+
+### 공고 명단 넣기 (`notice`)
+게시글 URL 을 주면 본문과 첨부(HWP·HWPX·PDF·XLSX·DOCX·ZIP)를 받아 텍스트로 바꾸고, Claude 가 명단 표에서 기업·팀명·대표·소속·아이템을 뽑는다. 헬스케어 관련 행만 저장한다(`--all` 이면 전부). 먼저 `--dry-run` 으로 결과를 확인하고 넣는 걸 권장. 첨부를 직접 받은 경우 URL 대신 파일 경로를 줘도 된다. 가려진 대표 이름(김**)은 저장하지 않는다.
+
+```bash
+python -m hcdb notice "https://www.mfds.go.kr/brd/m_99/view.do?seq=49659" --kind innov --year 2025 --dry-run
+python -m hcdb notice 학생창업유망팀_선정결과.hwp --kind program --program 학생창업유망팀 --year 2026
+```
+
+`javascript:` 로 내려받는 게시판(첨부 링크가 스크립트 함수인 곳)은 자동으로 못 받는다. 그런 곳은 파일을 받아 경로로 넣는다.
 
 ### 연구실 페이지 추가하기
 사이트마다 구조가 달라 CSS 선택자 설정으로 붙인다. `config/labs.example.json` 을 `config/labs.json` 으로 복사해서 항목을 추가하고, 먼저 `labs --dry-run` 으로 추출 결과를 확인한다. JS 로 그려지는 페이지는 `"render": true` (최초 1회 `playwright install chromium` 필요).
@@ -71,7 +110,7 @@ v_companies  업력·누적투자금·첫 투자일·팁스·특허 수 등 계�
 robots.txt 준수, 같은 호스트에 2초 간격, 같은 URL 은 30일 캐시. 구글뉴스 기사 링크는 robots 로 막혀 있어 제목·요약만 저장한다.
 
 ## 다음에 붙이면 좋은 것
-- **LLM 추출**: 규칙 기반 뉴스 추출은 "OO(대표 XXX)" 표기와 제목 패턴만 잡는다. `raw_documents.body` 를 Claude API 에 넘겨 칸별 JSON 으로 받아 `set_field(..., source='llm', confidence='중')` 으로 넣으면 BM·고객·지불주체·PoC 까지 채울 수 있다.
+- **게시판 목록 자동 순회**: 지금 `notice` 는 게시글 URL 하나씩 넣는다. 식약처·과기정통부·K-Startup 게시판을 검색어로 훑어 새 선정 공고를 찾아 `notice` 로 넘기는 단계를 붙이면 완전 자동이 된다.
 - **채용공고 수**: 원티드·사람인 공개 검색 결과 개수를 `job_posting_snapshots` 에 월 1회 저장.
 - **FIRST 연결**: FIRST 투자사 장부를 `investors.grp/type` 에, G1 딜 시트를 별도 테이블로 넣고 `cb_market` 으로 조인하면 `g1_same_market_cnt` 를 자동 계산할 수 있다.
 - **하드 필터 기준**: `config.py` 의 `MAX_AGE_YEARS` / `DEEPTECH_EXTRA_YEARS` / `MAX_VALUATION_KRW` 를 실제 기준에 맞게 수정.

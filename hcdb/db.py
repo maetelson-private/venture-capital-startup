@@ -20,8 +20,19 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
     return con
 
 
+# 기존 DB 에 나중에 추가된 칸: (테이블, 칸, 타입)
+_MIGRATIONS = [
+    ("patents", "ipc", "TEXT"),
+    ("patents", "applicants", "TEXT"),
+]
+
+
 def init(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA.read_text(encoding="utf-8"))
+    for table, col, typ in _MIGRATIONS:
+        cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
+        if col not in cols:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
     con.commit()
 
 

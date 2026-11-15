@@ -2,7 +2,7 @@
 import argparse
 
 from . import db, export, filters
-from .sources import dart, kipris, lab, manual, news, nps, nts
+from .sources import dart, kipris, lab, manual, mfds, news, notice, nps, nts
 
 
 def main(argv=None):
@@ -23,6 +23,9 @@ def main(argv=None):
     s.add_argument("--pages", type=int, default=1)
     s.add_argument("--limit", type=int)
 
+    s = sp.add_parser("feeds", help="업계 언론 RSS (벤처스퀘어·와우테일·히트뉴스 등) → 헬스케어 투자·선정 기사 추출")
+    s.add_argument("names", nargs="*", help="특정 매체만 (생략 시 전체)")
+
     s = sp.add_parser("article", help="기사 URL 직접 넣어 추출")
     s.add_argument("urls", nargs="+")
 
@@ -30,6 +33,17 @@ def main(argv=None):
     s = sp.add_parser("dart", help="DART 기업개황·결산 (DART_KEY)")
     s.add_argument("--years", type=int, default=3)
     sp.add_parser("kipris", help="KIPRIS 특허 (KIPRIS_KEY)")
+
+    sp.add_parser("mfds", help="식약처 혁신의료기기 지정 현황 (DATA_GO_KR_KEY + 활용신청)")
+
+    s = sp.add_parser("notice", help="공고·보도자료 URL/파일 → 첨부 명단 추출 (ANTHROPIC_API_KEY)")
+    s.add_argument("src", help="게시글 URL 또는 로컬 HWP/HWPX/PDF/XLSX 파일")
+    s.add_argument("--kind", choices=notice.KINDS, default="program")
+    s.add_argument("--program", help="프로그램명 (예: 실험실창업탐색팀)")
+    s.add_argument("--year", type=int)
+    s.add_argument("--operator", help="주관·운영 기관")
+    s.add_argument("--all", action="store_true", help="헬스케어 아닌 팀도 저장")
+    s.add_argument("--dry-run", action="store_true")
 
     s = sp.add_parser("nps", help="국민연금 가입사업장 CSV 가져오기")
     s.add_argument("csv")
@@ -68,6 +82,8 @@ def main(argv=None):
             print(f"기업 ID {cid}")
         case "news":
             news.run(con, a.query, a.pages, a.limit)
+        case "feeds":
+            news.run_feeds(con, a.names or None)
         case "article":
             news.run_urls(con, a.urls)
         case "nts":
@@ -78,6 +94,10 @@ def main(argv=None):
             kipris.run(con)
         case "nps":
             nps.run(con, a.csv)
+        case "mfds":
+            mfds.run(con)
+        case "notice":
+            notice.run(con, a.src, a.kind, a.program, a.year, a.operator, a.all, a.dry_run)
         case "labs":
             lab.run(con, a.config, a.dry_run)
         case "import":

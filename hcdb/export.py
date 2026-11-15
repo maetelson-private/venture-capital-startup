@@ -25,7 +25,8 @@ SHEETS = {
                     p.started_date 시작, p.source_url 출처 FROM partners p JOIN companies c ON c.id=p.company_id""",
     "인허가": """SELECT c.name 사명, g.product 제품, g.kind 구분, g.status 상태, g.device_class 등급,
                g.event_date 일자, g.source_url 출처 FROM regulatory g JOIN companies c ON c.id=g.company_id""",
-    "특허": """SELECT c.name 사명, p.application_no 출원번호, p.title 명칭, p.status 상태, p.is_pct PCT,
+    "특허": """SELECT c.name 사명, p.application_no 출원번호, p.title 명칭, p.status 상태, p.ipc IPC,
+              p.applicants 출원인,
               p.filed_date 출원일, p.registered_date 등록일 FROM patents p JOIN companies c ON c.id=p.company_id""",
     "수상": """SELECT c.name 사명, w.name 명칭, w.kind 구분, w.event_date 일자, w.source_url 출처
               FROM awards w JOIN companies c ON c.id=w.company_id""",

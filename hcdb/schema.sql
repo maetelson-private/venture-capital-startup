@@ -229,7 +229,9 @@ CREATE TABLE IF NOT EXISTS patents (
     application_no  TEXT PRIMARY KEY,
     company_id      INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     title           TEXT,
-    status          TEXT,                         -- 출원/공개/등록/거절/소멸
+    status          TEXT,                         -- 출원/공개/등록/거절/무효/소멸/취하/포기
+    ipc             TEXT,                         -- 복수값 ' | ' 구분. A61B·G16H 등으로 헬스케어 판별
+    applicants      TEXT,                         -- 공동출원인 (산학협력단 → 신생 법인 이전 추적)
     is_pct          INTEGER DEFAULT 0,
     filed_date      TEXT,
     registered_date TEXT,
