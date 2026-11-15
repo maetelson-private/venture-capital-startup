@@ -13,7 +13,7 @@ SCHEMA = Path(__file__).with_name("schema.sql")
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
     path = Path(path or config.DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(path)
+    con = sqlite3.connect(path, timeout=30)  # 다른 수집 작업이 동시에 쓰고 있으면 잠시 기다림
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     con.execute("PRAGMA journal_mode = WAL")

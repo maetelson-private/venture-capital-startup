@@ -2,7 +2,7 @@
 import argparse
 
 from . import db, export, filters
-from .sources import boards, dart, enrich, kipris, lab, manual, mfds, news, notice, nps, nts
+from .sources import boards, dart, enrich, kbic, portfolio, kipris, lab, manual, mfds, news, notice, nps, nts
 
 
 def main(argv=None):
@@ -25,6 +25,9 @@ def main(argv=None):
 
     s = sp.add_parser("feeds", help="업계 언론 RSS (벤처스퀘어·와우테일·히트뉴스 등) → 헬스케어 투자·선정 기사 추출")
     s.add_argument("names", nargs="*", help="특정 매체만 (생략 시 전체)")
+    s.add_argument("--pages", type=int, default=1, help="과거 페이지까지 (WordPress ?paged=N)")
+    s.add_argument("--since", help="이 날짜(YYYY-MM-DD) 이후 기사만")
+    s.add_argument("--archive", action="store_true", help="헬스케어 태그 피드도 포함 (과거 기사용)")
 
     s = sp.add_parser("article", help="기사 URL 직접 넣어 추출")
     s.add_argument("urls", nargs="+")
@@ -61,6 +64,10 @@ def main(argv=None):
     s.add_argument("file")
     s.add_argument("--sheet")
 
+    s = sp.add_parser("kbic", help="보건산업혁신창업센터 창업기업 (~300개사, 디지털헬스케어·의료기기)")
+    s.add_argument("--all", action="store_true", help="의약품 분야도 포함")
+    sp.add_parser("portfolio", help="헬스케어 투자사 포트폴리오 (DHP) → 이미 투자받음 표시")
+
     s = sp.add_parser("enrich", help="설립일 빈 기업을 Claude 웹 검색으로 보강 (ANTHROPIC_API_KEY)")
     s.add_argument("--limit", type=int)
     s.add_argument("--workers", type=int, default=4)
@@ -92,7 +99,7 @@ def main(argv=None):
         case "news":
             news.run(con, a.query, a.pages, a.limit)
         case "feeds":
-            news.run_feeds(con, a.names or None)
+            news.run_feeds(con, a.names or None, a.pages, a.since, a.archive)
         case "article":
             news.run_urls(con, a.urls)
         case "nts":
@@ -113,6 +120,10 @@ def main(argv=None):
             lab.run(con, a.config, a.dry_run)
         case "import":
             manual.run(con, a.file, a.sheet)
+        case "kbic":
+            kbic.run(con, a.all)
+        case "portfolio":
+            portfolio.run(con)
         case "enrich":
             enrich.run(con, a.limit, a.workers)
         case "filter":

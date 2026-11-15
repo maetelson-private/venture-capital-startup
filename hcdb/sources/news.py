@@ -165,6 +165,7 @@ def process_doc(con, doc: dict, require_health=True) -> int:
     ANTHROPIC_API_KEY 가 있으면 Claude 추출(본문이 충분할 때), 없으면 규칙 기반."""
     if config.ANTHROPIC_API_KEY and len(doc.get("body") or "") > 200:
         from .. import llm
+        con.commit()  # Claude 호출(수 초) 동안 쓰기 잠금을 잡고 있지 않도록
         a = llm.extract_article(doc.get("title") or "", doc["body"])
         con.execute("UPDATE raw_documents SET processed=1 WHERE id=?", (doc["id"],))
         return apply_article(con, doc, a, require_health) if a else 0
@@ -228,12 +229,20 @@ FEEDS = {
     "히트뉴스": "https://www.hitnews.co.kr/rss/allArticle.xml",
     "모비인사이드": "https://www.mobiinside.co.kr/feed/",
 }
+# 과거 기사까지 훑을 때 쓰는 헬스케어 태그 피드 (WordPress ?paged=N 으로 과거 페이지)
+ARCHIVE_FEEDS = {
+    "벤처스퀘어#헬스케어": "https://www.venturesquare.net/tag/%ED%97%AC%EC%8A%A4%EC%BC%80%EC%96%B4/feed/",
+    "벤처스퀘어#디지털헬스케어": "https://www.venturesquare.net/tag/%EB%94%94%EC%A7%80%ED%84%B8%ED%97%AC%EC%8A%A4%EC%BC%80%EC%96%B4/feed/",
+    "플래텀#헬스케어": "https://platum.kr/archives/tag/%ED%97%AC%EC%8A%A4%EC%BC%80%EC%96%B4/feed",
+}
 _SIGNAL = re.compile(r"투자|유치|선정|팁스|TIPS|시드|시리즈|프리A|데모데이|액셀러레이팅|혁신의료기기|실증특례|PoC|MOU", re.I)
 _CONTENT = "{http://purl.org/rss/1.0/modules/content/}encoded"
 
 
-def _feed_items(url: str) -> list[dict]:
-    r = http_get(url, check_robots=False)
+def _feed_items(url: str, page: int = 1) -> list[dict]:
+    r = http_get(url, check_robots=False, params={"paged": page} if page > 1 else None)
+    if r.status_code != 200 or not r.content.strip():
+        return []
     out = []
     for it in ET.fromstring(r.content).iter("item"):
         raw = it.findtext(_CONTENT) or it.findtext("description") or ""
@@ -248,16 +257,30 @@ def _feed_items(url: str) -> list[dict]:
     return out
 
 
-def run_feeds(con, names: list[str] | None = None) -> None:
-    with db.run_log(con, "news-rss", repr(names)) as st:
-        for name, url in FEEDS.items():
-            if names and name not in names:
+def _collect(url: str, pages: int, since: str | None) -> list[dict]:
+    """피드 1~pages 페이지를 모은다. since(YYYY-MM-DD)보다 오래된 기사가 나오면 멈춤."""
+    items = []
+    for p in range(1, pages + 1):
+        try:
+            batch = _feed_items(url, p)
+        except Exception:  # noqa: BLE001 — 마지막 페이지 넘어가면 404/파싱 오류
+            break
+        if not batch:
+            break
+        items += batch
+        if since and all((b["date"] or "9999") < since for b in batch):
+            break
+    return items
+
+
+def run_feeds(con, names: list[str] | None = None, pages: int = 1, since: str | None = None,
+              archive: bool = False) -> None:
+    feeds = {**FEEDS, **(ARCHIVE_FEEDS if archive else {})}
+    with db.run_log(con, "news-rss", f"{names} pages={pages} since={since}") as st:
+        for name, url in feeds.items():
+            if names and not any(n in name for n in names):
                 continue
-            try:
-                items = _feed_items(url)
-            except Exception as e:  # noqa: BLE001
-                print(f"[{name}] 피드 실패: {e}")
-                continue
+            items = [h for h in _collect(url, pages, since) if not since or (h["date"] or "9999") >= since]
             hits = [h for h in items if _SIGNAL.search(h["title"] + h["body"][:500])
                     and _HEALTH.search(h["title"] + h["body"][:1500])]
             print(f"[{name}] {len(items)}건 중 헬스케어·투자 신호 {len(hits)}건")
