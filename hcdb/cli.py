@@ -79,6 +79,7 @@ def main(argv=None):
     s = sp.add_parser("holding-news", help="기술지주 자회사·투자 기사 수집(collect) / 추출 결과 넣기(load 파일)")
     s.add_argument("step", choices=["collect", "load"])
     s.add_argument("file", nargs="?", help="load: 기사에서 뽑은 회사 JSON")
+    s.add_argument("--set", default="holding", choices=["holding", "early"], help="early = 예비·초기 창업팀 기사")
     s = sp.add_parser("incubators", help="보육·병원 창업·협회 디렉토리 (디지털헬스넷, SW 임상시험, 분당서울대병원, 연구중심병원, 연세대)")
     s.add_argument("--only", nargs="+", help="dhnet trials snubh rdh yonsei")
     s = sp.add_parser("univ", help="대학 기술지주 자회사·창업지원단 동문기업 (헬스케어만)")
@@ -166,7 +167,7 @@ def main(argv=None):
             dart_holdings.run(con, a.only)
         case "holding-news":
             if a.step == "collect":
-                holding_news.collect()
+                holding_news.collect(set_name=a.set)
             else:
                 holding_news.load(con, a.file)
         case "incubators":
