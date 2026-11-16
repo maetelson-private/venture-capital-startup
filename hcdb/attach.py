@@ -5,6 +5,7 @@
 다운로드 파일은 data/attachments/ 에 해시 이름으로 저장하고, 실행하지 않고 읽기만 한다.
 """
 import hashlib
+from requests.utils import requote_uri
 import io
 import re
 import struct
@@ -48,7 +49,8 @@ def download(url: str, referer: str | None = None) -> tuple[Path, str]:
     hit = list(ATTACH_DIR.glob(key + ".*"))
     if hit:
         return hit[0], hit[0].name
-    r = http_get(url, headers={"Referer": referer} if referer else None)
+    # 헤더는 latin-1 만 허용 → 한글이 든 게시글 주소는 퍼센트 인코딩
+    r = http_get(url, headers={"Referer": requote_uri(referer)} if referer else None)
     cd = r.headers.get("Content-Disposition", "")
     m = re.search(r"filename\*=UTF-8''([^;]+)|filename=\"?([^\";]+)", cd, re.I)
     raw = (m.group(1) or m.group(2)) if m else Path(urlparse(url).path).name
@@ -56,7 +58,9 @@ def download(url: str, referer: str | None = None) -> tuple[Path, str]:
         fname = unquote(raw.encode("latin-1").decode("utf-8") if m and not m.group(1) else raw)
     except (UnicodeDecodeError, UnicodeEncodeError):
         fname = unquote(raw)
-    ext = Path(fname).suffix.lower() or _sniff(r.content)
+    ext = Path(fname).suffix.lower()
+    if not re.fullmatch(r"\.(hwpx?|pdf|xlsx?|docx?|zip|csv|txt)", ext):  # 파일명이 잘려 확장자를 못 읽은 경우
+        ext = _sniff(r.content)
     path = ATTACH_DIR / f"{key}{ext}"
     path.write_bytes(r.content)
     return path, fname

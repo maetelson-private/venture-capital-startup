@@ -2,7 +2,7 @@
 import argparse
 
 from . import cards, db, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts
+from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing
 
 
 def main(argv=None):
@@ -68,8 +68,14 @@ def main(argv=None):
 
     s = sp.add_parser("kbic", help="보건산업혁신창업센터 창업기업 (~300개사, 디지털헬스케어·의료기기)")
     s.add_argument("--all", action="store_true", help="의약품 분야도 포함")
-    s = sp.add_parser("portfolio", help="포트폴리오·보육 기업 (DHP, D.CAMP) → 이미 투자받음 표시")
-    s.add_argument("--only", choices=["dhp", "dcamp"])
+    s = sp.add_parser("portfolio", help="포트폴리오·보육 기업 (DHP, D.CAMP, NAVER D2SF) → 이미 투자받음 표시")
+    s.add_argument("--only", choices=["dhp", "dcamp", "d2sf"])
+    s = sp.add_parser("briefing", help="정책브리핑(korea.kr) 보도자료 첨부의 선정 명단 (아기유니콘·초격차 등)")
+    s.add_argument("--q", nargs="+", help="검색어 (기본: 내장 목록)")
+    s.add_argument("--since", default="2019-01-01")
+    s.add_argument("--dry-run", action="store_true")
+    s = sp.add_parser("univ", help="대학 기술지주 자회사·창업지원단 동문기업 (헬스케어만)")
+    s.add_argument("--only", nargs="+", help="소스 키 (기본: 전부). 예: ku snu")
     sp.add_parser("tips", help="TIPS 선정기업 중 헬스케어·바이오의료 (공개 API) → 이미 투자받음 표시")
 
     s = sp.add_parser("enrich", help="설립일 빈 기업을 Claude 웹 검색으로 보강 (ANTHROPIC_API_KEY)")
@@ -138,10 +144,16 @@ def main(argv=None):
         case "kbic":
             kbic.run(con, a.all)
         case "portfolio":
-            if a.only != "dcamp":
+            if a.only in (None, "dhp"):
                 portfolio.run(con)
-            if a.only != "dhp":
+            if a.only in (None, "dcamp"):
                 portfolio.run_dcamp(con)
+            if a.only in (None, "d2sf"):
+                portfolio.run_d2sf(con)
+        case "briefing":
+            briefing.run(con, a.q, a.since, a.dry_run)
+        case "univ":
+            univ.run(con, a.only)
         case "tips":
             tips.run(con)
         case "enrich":

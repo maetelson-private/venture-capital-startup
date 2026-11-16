@@ -56,6 +56,16 @@ def http_get(url: str, *, params=None, headers=None, check_robots=True, **kw) ->
     return r
 
 
+def http_post_form(url: str, data: dict, *, check_robots=True) -> requests.Response:
+    """사이트 화면이 쓰는 AJAX(폼 POST) 목록 호출용."""
+    if check_robots and not _allowed(url):
+        raise Blocked(f"robots.txt 금지: {url}")
+    _throttle(url)
+    r = _session.post(url, data=data, headers={"X-Requested-With": "XMLHttpRequest"}, timeout=20)
+    r.raise_for_status()
+    return r
+
+
 def http_post_json(url: str, payload, *, params=None) -> dict:
     _throttle(url)
     r = _session.post(url, params=params, data=json.dumps(payload),

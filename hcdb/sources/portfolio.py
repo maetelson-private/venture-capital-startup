@@ -86,3 +86,64 @@ def run(con, korea_only=True) -> None:
             st["facts"] += 1
         con.commit()
     print(f"{st['facts']}곳 반영")
+
+
+D2SF_API = "https://d2sf.naver.com/api/portfolios"
+D2SF_URL = "https://d2sf.naver.com/ko/portfolio"
+
+
+def d2sf(sector: str = "Healthcare") -> list[dict]:
+    """NAVER D2SF 포트폴리오 공개 API (페이지 화면이 쓰는 것). 한 번에 10건, searchAfter 로 다음 페이지."""
+    out, after = [], None
+    while True:
+        params = {"langCode": "ko", "sector": sector, "display": 10}
+        if after:
+            params.update(searchAfterPublishAt=after[0], searchAfterId=after[1])
+        js = http_get(D2SF_API, params=params).json()
+        out += js.get("list") or []
+        after = js.get("searchAfter")
+        if not js.get("list") or not after or len(out) >= (js.get("total") or 0):
+            return out
+
+
+def _stage_year(s: str | None) -> tuple[str | None, int | None]:
+    m = re.match(r"\s*([^,]+?)\s*,\s*(20\d\d)", s or "")
+    return (m.group(1).strip(), int(m.group(2))) if m else (None, None)
+
+
+def run_d2sf(con, korea_only=True) -> None:
+    items = d2sf()
+    rows = []
+    for x in items:
+        tags = {t["tag"]["subCategory"]: [] for t in x.get("portfolioTags", [])}
+        for t in x.get("portfolioTags", []):
+            tags[t["tag"]["subCategory"]].append(t["tag"]["name"])
+        if korea_only and "South Korea" not in tags.get("region", []):
+            continue
+        rows.append((x, tags))
+    print(f"D2SF 헬스케어 {len(items)}곳 중 한국 {len(rows)}곳")
+    with db.run_log(con, "portfolio:d2sf") as st:
+        for x, tags in rows:
+            name = x["companyName"].strip()
+            cid = db.get_or_create_company(con, name, source_url=D2SF_URL)
+            home = next((l["url"].strip() for l in x.get("portfolioLinks") or [] if l.get("type") == "home"), None)
+            vals = {"service_summary": (x.get("description") or "").strip() or None, "ceo": x.get("founder"),
+                    "url": home}
+            db.set_fields(con, cid, vals, "portfolio:d2sf", D2SF_URL, "상")
+            year = (x.get("foundedAt") or "")[:4]
+            if year.isdigit():  # 연도만 공개 → 7월 1일로 두고 신뢰도 '하' (설립일 보강 규칙과 같음)
+                db.set_field(con, cid, "founded_date", f"{year}-07-01", "portfolio:d2sf", D2SF_URL, "하")
+            for sec in tags.get("sector", []):
+                if sec != "Healthcare":
+                    db.add_tag(con, cid, "kw_means", sec, D2SF_URL)
+            db.add_tag(con, cid, "program", "NAVER D2SF", D2SF_URL)
+            stage, y = _stage_year(x.get("fundedByNaver"))
+            db.add_round(con, cid, stage or "D2SF 투자", f"{y}-01-01" if y else None, None, ["네이버 D2SF"],
+                         D2SF_URL, "상")
+            later, ly = _stage_year(x.get("latestFunded"))
+            if later and (later, ly) != (stage, y):
+                db.add_round(con, cid, later, f"{ly}-01-01" if ly else None, None, [], D2SF_URL, "중")
+            st["facts"] += 1
+        con.execute("UPDATE investors SET type=coalesce(type,'CVC') WHERE name='네이버 D2SF'")
+        con.commit()
+    print(f"{st['facts']}곳 반영")
