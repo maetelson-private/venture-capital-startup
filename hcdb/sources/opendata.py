@@ -1,0 +1,300 @@
+"""공공데이터 파일·공개 API → 초기 헬스케어 기업 (2026-11 조사).
+
+data.go.kr 파일데이터는 로그인 없이 내려받을 수 있다(사이트 화면이 쓰는 경로). 받는 횟수가 많아지면
+CAPTCHA 를 요구하는데, 그때는 멈추고 사람이 직접 받는다. 받은 파일은 data/opendata/{데이터셋번호}.csv.
+
+  venture   중기부 벤처기업명단 (15084581) — 업종·주생산품 키워드, 신규 확인·예비벤처 표시
+  nps       국민연금 가입사업장 (15083277) — 의료기기·의약 연구개발 업종 + 최근 5년 내 가입(적용일자≈설립)
+            → 신규 시드, 그리고 기존 nps 모듈로 월별 인원 스냅샷
+  techdev   중소기업 기술개발 과제정보 (3044610) — 산업기술분류 '바이오ㆍ의료' 주관기업
+  labco     연구소기업 운영현황 (15089826) — 이름에 의료·바이오 단서가 있는 최근 등록 연구소기업
+  kmedi     대구경북첨단의료산업진흥재단 입주기업 (15020969)
+  aiv       AI바우처 공급기업 풀 (pms.ai-voucher.or.kr, 공개 JSON) — '의료'·'헬스케어' 솔루션, 일반·청년창업 바우처
+"""
+import csv
+import json
+import re
+import time
+from datetime import date
+from pathlib import Path
+
+from .. import config, db
+from ..fetch import http_get, http_post_form
+from ..normalize import norm_date
+from .univ import is_health
+
+DIR = config.DATA_DIR / "opendata"
+_NOT = re.compile(r"화장품|코스메틱|뷰티|반려|애견|펫|식품|음료|건강기능식품|농업|축산|수산|사료")
+_CORP = re.compile(r"\(주\)|㈜|주식회사|\(유\)|유한회사|\(재\)|재단법인|\(사\)")
+
+
+def _rows(path: Path):
+    raw = path.read_bytes()
+    for enc in ("utf-8-sig", "cp949"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        text = raw.decode("cp949", "ignore")
+    return list(csv.DictReader(text.splitlines()))
+
+
+def _name(s: str) -> str:
+    return re.sub(r"\s+", " ", _CORP.sub("", s or "")).strip()
+
+
+def _cutoff(years: int = 5) -> str:
+    return f"{date.today().year - years}-{date.today():%m-%d}"
+
+
+def fetch(dataset_id: str) -> Path:
+    """data.go.kr 파일데이터 내려받기. CAPTCHA 가 필요하다고 나오면 멈춘다(사람이 직접 받아 DIR 에 넣기)."""
+    DIR.mkdir(parents=True, exist_ok=True)
+    page = http_get(f"https://www.data.go.kr/data/{dataset_id}/fileData.do").text
+    m = re.search(r"fn_fileDataDown\('(\d+)',\s*'([^']+)',\s*'([^']*)',\s*'(\d+)',\s*'(\d+)'\)", page)
+    if not m:
+        raise SystemExit(f"{dataset_id}: 다운로드 버튼을 찾지 못함")
+    pk, dpk, _, sn, _ = m.groups()
+    meta = http_get("https://www.data.go.kr/tcs/dss/selectFileDataDownload.do", params={
+        "publicDataDetailPk": dpk, "publicDataPk": pk, "atchFileId": "", "fileDetailSn": sn,
+        "publicDataTyCode": "PR0051"}).json()
+    a, fs = meta["atchFileId"], meta["fileDetailSn"]
+    lim = http_post_form("https://www.data.go.kr/cmm/cmm/check-limit.json", {"atchFileId": a, "fileDetailSn": fs})
+    if "true" in lim.text:
+        raise SystemExit(f"{dataset_id}: data.go.kr 가 CAPTCHA 를 요구함 → 브라우저에서 직접 받아 {DIR} 에 넣으세요")
+    r = http_get("https://www.data.go.kr/cmm/cmm/fileDownload.do",
+                 params={"atchFileId": a, "fileDetailSn": fs, "dataNm": dataset_id}, timeout=300)
+    path = DIR / f"{dataset_id}.csv"
+    path.write_bytes(r.content)
+    print(f"{dataset_id}: {len(r.content):,} bytes → {path}")
+    return path
+
+
+def _file(dataset_id: str, download: bool) -> Path:
+    path = DIR / f"{dataset_id}.csv"
+    if download or not path.exists():
+        path = fetch(dataset_id)
+    return path
+
+
+def _seed(con, label: str, src: str, x: dict, program: str, conf="중") -> int:
+    cid = db.get_or_create_company(con, x["name"], x.get("biz_no"), src)
+    vals = {k: x.get(k) for k in ("service_summary", "url", "sido") if x.get(k)}
+    db.set_fields(con, cid, vals, label, src, conf)
+    if x.get("founded_date"):  # 공공데이터의 날짜는 설립일의 근사(가입·확인일) → 신뢰도 하, 더 나은 값이 있으면 그쪽이 이긴다
+        db.set_field(con, cid, "founded_date", x["founded_date"], label, src, "하")
+    db.add_tag(con, cid, "program", program, src)
+    if x.get("pre"):
+        con.execute("UPDATE companies SET is_pre_startup=1 WHERE id=? AND founded_date IS NULL", (cid,))
+    return cid
+
+
+# ── 벤처기업명단 ─────────────────────────────────────────────────────────
+def run_venture(con, download=False) -> None:
+    src = "https://www.data.go.kr/data/15084581/fileData.do"
+    rows = _rows(_file("15084581", download))
+    keep = []
+    for r in rows:
+        text = f"{r.get('업종명(11차)', '')} {r.get('주생산품', '')}"
+        if is_health(text) and not _NOT.search(text):
+            keep.append(r)
+    print(f"벤처기업명단 {len(rows):,}곳 중 의료·건강 {len(keep):,}곳")
+    with db.run_log(con, "od:venture") as st:
+        for r in keep:
+            typ = r.get("벤처확인유형", "")
+            x = {"name": _name(r["업체명"]), "service_summary": r.get("주생산품"), "sido": r.get("지역"),
+                 "pre": "예비" in typ}
+            if not x["name"]:
+                continue
+            _seed(con, "od:venture", src, x, f"벤처기업 확인 ({typ}, {r.get('신규_재확인', '')})")
+            st["facts"] += 1
+        con.commit()
+    print(f"{st['facts']}곳 반영")
+
+
+# ── 국민연금 가입사업장 ────────────────────────────────────────────────────
+# 국민연금 업종코드(6자리, KSIC 아님). 의료기기 제조 / 의학·약학 연구개발 / 의약품
+NPS_CODES = {"331100", "331101", "331102", "331103", "331104", "730003", "730001", "242301", "242303",
+             "242305", "242309"}
+NPS_SW = {"722000", "723000", "729000", "721000"}  # 응용 SW 등 → 사명에 의료 단서가 있을 때만
+_NPS_NAME = re.compile(r"메디|메디컬|헬스|케어|닥터|큐어|테라|바이오|뉴로|진단|의료|클리닉|헬스케어|라이프|마인드|슬립|힐")
+
+
+def run_nps(con, download=False) -> None:
+    src = "https://www.data.go.kr/data/15083277/fileData.do"
+    path = _file("15083277", download)
+    cutoff = _cutoff(5)
+    keep = []
+    with open(path, encoding="cp949", errors="ignore", newline="") as f:
+        rd = csv.reader(f)
+        h = next(rd)
+        ix = {k: next(i for i, c in enumerate(h) if k in c) for k in
+              ("사업장명", "사업자등록번호", "가입상태", "형태구분", "업종코드", "업종코드명", "적용일자", "가입자수",
+               "법정동주소광역시도코드")}
+        for r in rd:
+            code = r[ix["업종코드"]]
+            if r[ix["가입상태"]] != "1" or r[ix["형태구분"]] != "1" or r[ix["적용일자"]] < cutoff:
+                continue
+            name = r[ix["사업장명"]]
+            if code in NPS_CODES or (code in NPS_SW and _NPS_NAME.search(name)):
+                if not _NOT.search(name):
+                    keep.append(r)
+        print(f"국민연금 가입사업장 중 의료 업종·최근 5년 가입 법인 {len(keep):,}곳")
+    with db.run_log(con, "od:nps") as st:
+        for r in keep:
+            x = {"name": _name(r[ix["사업장명"]]), "founded_date": norm_date(r[ix["적용일자"]]),
+                 "service_summary": r[ix["업종코드명"]]}
+            if not x["name"]:
+                continue
+            cid = _seed(con, "od:nps", src, x, "국민연금 신규 사업장 (의료 업종)", "하")
+            st["facts"] += 1
+        con.commit()
+    print(f"{st['facts']}곳 반영 → 인원 스냅샷은 `python -m hcdb nps {path}`")
+
+
+# ── 중소기업 기술개발 과제 ───────────────────────────────────────────────
+def run_techdev(con, download=False) -> None:
+    src = "https://www.data.go.kr/data/3044610/fileData.do"
+    rows = _rows(_file("3044610", download))
+    keep = [r for r in rows if ("바이오ㆍ의료" in r.get("산업기술분류", "") or is_health(r.get("과제명")))
+            and not _NOT.search(r.get("산업기술분류", "") + r.get("과제명", ""))]
+    print(f"중소기업 기술개발 과제 {len(rows):,}건 중 바이오·의료 {len(keep):,}건")
+    with db.run_log(con, "od:techdev") as st:
+        for r in keep:
+            x = {"name": _name(r.get("주관기관")), "service_summary": r.get("과제명")}
+            if not x["name"] or re.search(r"대학|병원|연구원|재단|센터|협회", x["name"]):
+                continue
+            cid = _seed(con, "od:techdev", src, x, f"중기부 R&D {r.get('사업년도', '')} ({r.get('사업명', '')})")
+            db.upsert_row(con, "grants", {"company_id": cid, "program": r.get("사업명"), "year":
+                                          int(r["사업년도"]) if str(r.get("사업년도", "")).isdigit() else None,
+                                          "operator": r.get("전문기관"), "source_url": src, "confidence": "상"})
+            st["facts"] += 1
+        con.commit()
+    print(f"{st['facts']}곳 반영")
+
+
+# ── 연구소기업 ──────────────────────────────────────────────────────────
+def run_labco(con, download=False) -> None:
+    src = "https://www.data.go.kr/data/15089826/fileData.do"
+    rows = _rows(_file("15089826", download))
+    y0 = date.today().year - 5
+    keep = [r for r in rows if str(r.get("등록연도", "0")).isdigit() and int(r["등록연도"]) >= y0
+            and _NPS_NAME.search(r.get("기업명", "")) and not _NOT.search(r.get("기업명", ""))]
+    print(f"연구소기업 {len(rows):,}곳 중 최근 5년 등록·이름에 의료 단서 {len(keep):,}곳")
+    with db.run_log(con, "od:labco") as st:
+        for r in keep:
+            x = {"name": _name(r["기업명"])}
+            _seed(con, "od:labco", src, x, f"연구소기업 {r['등록연도']} ({r.get('현행특구', '')})")
+            st["facts"] += 1
+        con.commit()
+    print(f"{st['facts']}곳 반영")
+
+
+# ── K-MEDI hub 입주 ─────────────────────────────────────────────────────
+def run_kmedi(con, download=False) -> None:
+    src = "https://www.data.go.kr/data/15020969/fileData.do"
+    rows = _rows(_file("15020969", download))
+    keep = [r for r in rows if not re.search(r"연구원|센터|대학|재단|병원|기관", r.get("기업 및 기관명", ""))
+            and is_health(r.get("업종"), r.get("기업 및 기관명"))]
+    with db.run_log(con, "od:kmedi") as st:
+        for r in keep:
+            _seed(con, "od:kmedi", src, {"name": _name(r["기업 및 기관명"]), "service_summary": r.get("업종")},
+                  "대구경북첨복단지 입주")
+            st["facts"] += 1
+        con.commit()
+    print(f"대구경북첨복단지 입주 {st['facts']}곳 반영")
+
+
+# ── AI바우처 공급기업 풀 ─────────────────────────────────────────────────
+AIV = "https://pms.ai-voucher.or.kr/supply/pool"
+
+
+def run_aiv(con, download=False) -> None:
+    year = http_get(f"{AIV}/years", check_robots=False).json()[-1]
+    items, seen = [], set()
+    for voucher in ("1", "4"):  # 1 일반 AI바우처, 4 AI 청년창업기업 바우처
+        for kw in ("의료", "헬스케어"):
+            page = 0
+            while True:
+                js = http_get(f"{AIV}/list", check_robots=False, params={
+                    "area": "", "exptFld": "", "keyword": kw, "year": year, "approvalStatus": 1,
+                    "applyVoucher": voucher, "page": page, "size": 100}).json()
+                for it in js.get("content") or []:
+                    if it["splyPoolNo"] not in seen:
+                        seen.add(it["splyPoolNo"])
+                        items.append((voucher, it))
+                if js.get("last", True):
+                    break
+                page += 1
+    y0 = date.today().year - 5
+    keep = [(v, it) for v, it in items if str(it.get("fndnYmd") or "")[:4].isdigit()
+            and int(str(it["fndnYmd"])[:4]) >= y0 and is_health(it.get("aiSolution"))]
+    print(f"AI바우처 공급기업({year}) 의료·헬스케어 {len(items)}곳 중 최근 5년 설립 {len(keep)}곳")
+    src = f"{AIV}/list"
+    with db.run_log(con, "od:aiv") as st:
+        for v, it in keep:
+            sol = re.sub(r"\s+", " ", it.get("aiSolution") or "")
+            x = {"name": _name(it["splyCmpNm"]), "url": it.get("splyCmpHmpg"), "sido": it.get("splyAddrSido"),
+                 "service_summary": sol[:300], "founded_date": f"{str(it['fndnYmd'])[:4]}-07-01"}
+            _seed(con, "od:aiv", src, x, "AI바우처 공급기업" + (" (청년창업)" if v == "4" else ""))
+            st["facts"] += 1
+        con.commit()
+    print(f"{st['facts']}곳 반영")
+
+
+SOURCES = {"venture": run_venture, "nps": run_nps, "techdev": run_techdev, "labco": run_labco,
+           "kmedi": run_kmedi, "aiv": run_aiv}
+
+
+def run(con, only=None, download=False) -> None:
+    if only == ["nps-founding"]:
+        return fill_founding_from_nps(con)
+    for k, fn in SOURCES.items():
+        if not only or k in only:
+            try:
+                fn(con, download)
+            except SystemExit as e:
+                print(f"{k}: {e}")
+            except Exception as e:  # noqa: BLE001
+                print(f"{k}: 실패 {e!r}")
+            time.sleep(1)
+    if (DIR / "15083277.csv").exists():
+        fill_founding_from_nps(con)
+
+
+def fill_founding_from_nps(con, path: Path | None = None) -> None:
+    """설립일이 빈 회사를 국민연금 가입사업장의 최초 적용일자(≈설립 직후)로 채운다. 사명이 국민연금 파일에서
+    한 곳에만 있을 때만(동명 회피). 신뢰도 하 — 더 정확한 출처가 나오면 그쪽이 이긴다."""
+    from ..normalize import norm_name
+    path = path or DIR / "15083277.csv"
+    first: dict[str, str] = {}
+    dup: set[str] = set()
+    with open(path, encoding="cp949", errors="ignore", newline="") as f:
+        rd = csv.reader(f)
+        h = next(rd)
+        i_nm = next(i for i, c in enumerate(h) if "사업장명" in c)
+        i_dt = next(i for i, c in enumerate(h) if "적용일자" in c)
+        i_ty = next(i for i, c in enumerate(h) if "형태구분" in c)
+        for r in rd:
+            if r[i_ty] != "1":
+                continue
+            k = norm_name(r[i_nm])
+            if not k:
+                continue
+            if k in first and first[k] != r[i_dt]:
+                dup.add(k)
+            first.setdefault(k, r[i_dt])
+    src = "https://www.data.go.kr/data/15083277/fileData.do"
+    n = 0
+    with db.run_log(con, "od:nps-founding") as st:
+        for c in con.execute("SELECT id FROM companies WHERE founded_date IS NULL AND coalesce(is_pre_startup,0)=0").fetchall():
+            keys = {r[0] for r in con.execute("SELECT alias_norm FROM company_aliases WHERE company_id=?", (c["id"],))}
+            hits = {first[k] for k in keys if k in first and k not in dup}
+            if len(hits) == 1:
+                db.set_field(con, c["id"], "founded_date", norm_date(hits.pop()), "od:nps-founding", src, "하")
+                n += 1
+        st["facts"] = n
+        con.commit()
+    print(f"국민연금 적용일자로 설립일(근사) 채움 {n}곳")
