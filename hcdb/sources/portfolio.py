@@ -10,7 +10,7 @@ import re
 from bs4 import BeautifulSoup
 
 from .. import db
-from ..fetch import http_get
+from ..fetch import http_get, http_post_form
 
 DHP_URL = "https://dhpartners.io/portfolio"
 
@@ -273,3 +273,132 @@ def run_vc(con, key: str) -> None:
             st["facts"] += 1
         con.execute("UPDATE investors SET type=coalesce(type,?) WHERE name=?", (typ, investor))
         con.commit()
+
+
+# ── 2차: 액셀러레이터·CVC·연구소 기술지주 (2026-11 조사) ─────────────────────────────
+def _health(*t) -> bool:
+    from .univ import is_health
+    return is_health(*t)
+
+
+def iaccel() -> list[dict]:
+    """인포뱅크 아이엑셀: 바이오/헬스케어 분류(category_seq2=17) JSON."""
+    r = http_post_form("http://www.iaccel.net/portfolio/getPortfolioList.json", {
+        "startPage": 1, "numPerPage": 500, "category_seq1": 2, "category_seq2_list[]": 17})
+    rows = ((r.json().get("data") or {}).get("result") or [{}])[0].get("connectPortfolioList") or []
+    return [{"name": x.get("title", ""), "desc": x.get("content"), "ceo": x.get("representative"),
+             "url": x.get("site_url")} for x in rows]
+
+
+def clab() -> list[dict]:
+    """삼성 C-Lab Outside 육성기업 + 스핀오프 (설명 키워드로 헬스케어만)."""
+    import json as _j
+    out = []
+    for ep in ("portpolio", "spinoff"):
+        r = http_post_form(f"https://www.samsungclab.com/api/{ep}/list", {})
+        try:
+            data = r.json()
+        except _j.JSONDecodeError:
+            continue
+        for grp in data if isinstance(data, list) else data.get("data", []):
+            for x in grp.get("list", []) if isinstance(grp, dict) else []:
+                desc = x.get("companyDesc") or x.get("companyDescShort")
+                if _health(desc, x.get("companyDescShort")):
+                    out.append({"name": x.get("companyName", ""), "alias": x.get("companyNameEn"), "desc": desc,
+                                "url": x.get("companyLink"), "program": f"{x.get('year', '')} {ep}"})
+    return out
+
+
+def kiac() -> list[dict]:
+    """한국투자액셀러레이터: 카드의 분야 라벨로 바이오/헬스케어."""
+    r = http_get("https://ac.koreainvestment.com/portfolio")
+    r.encoding = "utf-8"
+    s = BeautifulSoup(r.text, "html.parser")
+    out = []
+    for it in s.select("div.portfolio-item"):
+        g = lambda sel: (it.select_one(sel).get_text(" ", strip=True) if it.select_one(sel) else "")  # noqa: E731
+        typ, name, say = g(".portfolio-item-type"), g(".portfolio-item-title"), g(".portfolio-item-say")
+        if name and (re.search(r"바이오|헬스|Health|Bio|의료|Medi", typ, re.I) or _health(say)):
+            out.append({"name": name, "desc": say})
+    return out
+
+
+def etri() -> list[dict]:
+    """ETRI홀딩스(연구소 기술지주): '바이오·메디컬' + 설명에 의료 단서가 있는 ICT."""
+    r = http_get("https://www.etriholdings.com/portfolio")
+    r.encoding = "utf-8"
+    s = BeautifulSoup(r.text, "html.parser")
+    out = []
+    for a in s.select("li > a"):
+        divi, comp, part = (a.select_one(f".text p.{c}") for c in ("divi", "company", "part"))
+        if not comp:
+            continue
+        d, desc = (divi.get_text(strip=True) if divi else ""), (part.get_text(" ", strip=True) if part else "")
+        if "바이오" in d or "메디" in d or _health(desc):
+            out.append({"name": comp.get_text(strip=True), "desc": desc,
+                        "url": a.get("href") if a.get("href", "").startswith("http") else None})
+    return out
+
+
+def theventures() -> list[dict]:
+    r = http_get("https://theventures.vc/ko/companies")
+    r.encoding = "utf-8"
+    s = BeautifulSoup(r.text, "html.parser")
+    out = []
+    for a in s.select("a[href]"):
+        nm = a.select_one("div.font-medium")
+        muted = [d.get_text(strip=True) for d in a.select("div.text-muted-foreground")]
+        if nm and muted and "Healthcare" in muted[0] and (len(muted) < 2 or "한국" in muted[1] or "Korea" in muted[1]):
+            out.append({"name": nm.get_text(strip=True), "url": a["href"] if a["href"].startswith("http") else None})
+    return out
+
+
+def ccvc() -> list[dict]:
+    """쿨리지코너인베스트먼트: 공개 API, BIO 분류(category1=6)."""
+    js = http_get("https://ccvc.co.kr/api/user/0/mapping/product", params={
+        "fields": "id,name,name_en,simple_desc,tags,categories", "ordering": "id", "page_length": 500,
+        "category1": 6}).json()
+    return [{"name": x.get("name", ""), "alias": x.get("name_en"), "desc": x.get("simple_desc")}
+            for x in js.get("data", [])]
+
+
+def signite() -> list[dict]:
+    """시그나이트파트너스(신세계 CVC): 공개 JSON, 'Healthcare' 태그 또는 설명 키워드."""
+    out, url, params = [], "https://invest-api.lukuku.co/portfolios", {"ordering": "-my_order", "limit": 100}
+    while url:
+        js = http_get(url, params=params, check_robots=False).json()
+        for x in js.get("results", []):
+            tags = " ".join(x.get("tagsNameList") or [])
+            if "Health" in tags or _health(x.get("content")):
+                out.append({"name": x.get("companyName1", ""), "desc": x.get("content"), "url": x.get("link")})
+        url, params = js.get("next"), None
+    return out
+
+
+def kingo() -> list[dict]:
+    """킹고스프링(성균관대 기반 AC): 바이오 메뉴(/21), 이름만."""
+    r = http_get("https://www.kingospring.com/21")
+    r.encoding = "utf-8"
+    s = BeautifulSoup(r.text, "html.parser")
+    w = s.select("div._gallery_wrap")
+    items = (w[0] if w else s).select("div._item")
+    out = []
+    for it in items:
+        h = it.select_one("h4")
+        if h and h.get_text(strip=True):
+            a = it.select_one("a.item_container")
+            out.append({"name": h.get_text(strip=True),
+                        "url": a["href"] if a and a.get("href", "").startswith("http") else None})
+    return out
+
+
+VCS.update({
+    "iaccel": (iaccel, "인포뱅크 아이엑셀", "AC"),
+    "clab": (clab, "삼성 C-Lab Outside", "CVC"),
+    "kiac": (kiac, "한국투자액셀러레이터", "AC"),
+    "etri": (etri, "ETRI홀딩스", "기술지주"),
+    "theventures": (theventures, "더벤처스", "AC"),
+    "ccvc": (ccvc, "쿨리지코너인베스트먼트", "VC"),
+    "signite": (signite, "시그나이트파트너스", "CVC"),
+    "kingo": (kingo, "킹고스프링", "AC"),
+})

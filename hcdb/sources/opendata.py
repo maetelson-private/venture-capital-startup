@@ -65,7 +65,7 @@ def fetch(dataset_id: str) -> Path:
     if "true" in lim.text:
         raise SystemExit(f"{dataset_id}: data.go.kr 가 CAPTCHA 를 요구함 → 브라우저에서 직접 받아 {DIR} 에 넣으세요")
     r = http_get("https://www.data.go.kr/cmm/cmm/fileDownload.do",
-                 params={"atchFileId": a, "fileDetailSn": fs, "dataNm": dataset_id}, timeout=300)
+                 params={"atchFileId": a, "fileDetailSn": fs, "dataNm": dataset_id})
     path = DIR / f"{dataset_id}.csv"
     path.write_bytes(r.content)
     print(f"{dataset_id}: {len(r.content):,} bytes → {path}")
@@ -298,3 +298,56 @@ def fill_founding_from_nps(con, path: Path | None = None) -> None:
         st["facts"] = n
         con.commit()
     print(f"국민연금 적용일자로 설립일(근사) 채움 {n}곳")
+
+
+# ── 지역 입주·기업 현황 파일 (열 이름이 제각각 → 이름·설명 열을 추정해서 읽음) ─────────────
+EXTRA = {
+    "15032487": "성남시 벤처기업", "15085792": "대구 의료R&D지구 입주", "15100806": "경기 광교비즈니스센터 입주",
+    "15100814": "경기 테크노밸리(경기바이오센터 등) 입주", "15149071": "경북 바이오헬스기업",
+}
+_NAME_COL = re.compile(r"업체명|기업명|기업 명|회사명|사업장명")
+_DESC_COL = re.compile(r"주생산품|주요생산품|업종|분야|품목|제품|아이템|종류|산업분류")
+_YEAR_COL = re.compile(r"설립년도|설립연도|설립일")
+
+
+def run_extra(con, download=False) -> None:
+    for ds, label in EXTRA.items():
+        try:
+            rows = _rows(_file(ds, download))
+        except SystemExit as e:
+            print(f"{label}: {e}")
+            continue
+        except Exception as e:  # noqa: BLE001
+            print(f"{label}: 받기 실패 {e!r}")
+            continue
+        if not rows:
+            continue
+        cols = list(rows[0].keys())
+        nc = next((c for c in cols if _NAME_COL.search(c)), None)
+        dcs = [c for c in cols if _DESC_COL.search(c)]
+        yc = next((c for c in cols if _YEAR_COL.search(c)), None)
+        if not nc:
+            print(f"{label}: 회사명 열 없음 {cols}")
+            continue
+        all_health = ds == "15149071"  # 경북 바이오헬스는 전부 해당 분야
+        src = f"https://www.data.go.kr/data/{ds}/fileData.do"
+        n = 0
+        with db.run_log(con, f"od:{ds}") as st:
+            for r in rows:
+                desc = " ".join(r.get(c) or "" for c in dcs)
+                name = _name(r.get(nc))
+                if not name or _NOT.search(desc + name) or re.search(r"재단|연구원|센터|대학|병원|기관$", name):
+                    continue
+                if not (all_health or is_health(desc, name)):
+                    continue
+                y = (r.get(yc) or "")[:10] if yc else ""
+                x = {"name": name, "service_summary": desc.strip() or None,
+                     "founded_date": norm_date(y if len(y) >= 8 else (f"{y[:4]}-07-01" if y[:4].isdigit() else ""))}
+                _seed(con, f"od:{ds}", src, x, label)
+                n += 1
+            st["facts"] = n
+            con.commit()
+        print(f"{label}: {len(rows)}행 중 헬스케어 {n}곳 반영")
+
+
+SOURCES["extra"] = run_extra

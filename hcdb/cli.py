@@ -2,7 +2,7 @@
 import argparse
 
 from . import cards, db, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata
+from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters
 
 
 def main(argv=None):
@@ -69,7 +69,7 @@ def main(argv=None):
     s = sp.add_parser("kbic", help="보건산업혁신창업센터 창업기업 (~300개사, 디지털헬스케어·의료기기)")
     s.add_argument("--all", action="store_true", help="의약품 분야도 포함")
     s = sp.add_parser("portfolio", help="포트폴리오·보육 기업 (DHP, D.CAMP, NAVER D2SF) → 이미 투자받음 표시")
-    s.add_argument("--only", choices=["dhp", "dcamp", "d2sf", "futureplay", "lotte", "springcamp", "mashup", "kakao"])
+    s.add_argument("--only", choices=["dhp", "dcamp", "d2sf", "futureplay", "lotte", "springcamp", "mashup", "kakao", "iaccel", "clab", "kiac", "etri", "theventures", "ccvc", "signite", "kingo"])
     s = sp.add_parser("briefing", help="정책브리핑(korea.kr) 보도자료 첨부의 선정 명단 (아기유니콘·초격차 등)")
     s.add_argument("--q", nargs="+", help="검색어 (기본: 내장 목록)")
     s.add_argument("--since", default="2019-01-01")
@@ -85,6 +85,8 @@ def main(argv=None):
     s = sp.add_parser("opendata", help="공공데이터 파일·공개 API (벤처기업명단, 국민연금, 중기 R&D, 연구소기업, 첨복단지, AI바우처)")
     s.add_argument("--only", nargs="+", help="venture nps techdev labco kmedi aiv")
     s.add_argument("--download", action="store_true", help="data.go.kr 에서 최신 파일을 다시 받음")
+    s = sp.add_parser("clusters", help="대학 창업지원단·지역 바이오 클러스터·TP 입주기업 (14곳)")
+    s.add_argument("--only", nargs="+")
     s = sp.add_parser("univ", help="대학 기술지주 자회사·창업지원단 동문기업 (헬스케어만)")
     s.add_argument("--only", nargs="+", help="소스 키 (기본: 전부). 예: ku snu")
     sp.add_parser("tips", help="TIPS 선정기업 중 헬스케어·바이오의료 (공개 API) → 이미 투자받음 표시")
@@ -177,6 +179,8 @@ def main(argv=None):
             incubators.run(con, a.only)
         case "opendata":
             opendata.run(con, a.only, a.download)
+        case "clusters":
+            clusters.run(con, a.only)
         case "univ":
             univ.run(con, a.only)
         case "tips":

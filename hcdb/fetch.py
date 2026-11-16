@@ -30,10 +30,21 @@ def _allowed(url: str) -> bool:
         rp = urllib.robotparser.RobotFileParser()
         try:
             r = _session.get(base + "/robots.txt", timeout=10)
-            rp.parse(r.text.splitlines() if r.status_code == 200 else [])
+            if r.status_code >= 500:
+                # RFC 9309: 서버 오류면 '전부 금지'로 본다
+                lines = ["User-agent: *", "Disallow: /"]
+            elif r.status_code == 200:
+                text = r.content.decode("utf-8", "ignore").lstrip("﻿")  # BOM 이 있으면 첫 줄을 못 읽음
+                # 'User-agent:' 바로 뒤 빈 줄 때문에 그룹이 끊기는 파일이 있어 빈 줄은 버린다
+                lines = [l for l in text.splitlines() if l.strip()]
+            else:  # 404 등 → 제한 없음
+                lines = []
+            rp.parse(lines)
             _robots[base] = rp
         except requests.RequestException:
-            _robots[base] = None
+            # 연결 실패도 확인할 수 없으니 금지로 본다 (예전엔 허용으로 취급했음)
+            rp.parse(["User-agent: *", "Disallow: /"])
+            _robots[base] = rp
     rp = _robots[base]
     return True if rp is None else rp.can_fetch(config.USER_AGENT, url)
 
