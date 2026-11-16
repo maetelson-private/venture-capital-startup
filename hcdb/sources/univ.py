@@ -411,7 +411,35 @@ def run_holding(con, key: str) -> None:
         con.commit()
 
 
-SOURCES = {"ku": run_ku, "snu": run_snu, **{k: (lambda con, k=k: run_holding(con, k)) for k in HOLDINGS}}
+# 화면이 JS 로만 그려지거나(한국과학기술지주) 파이썬에서 인증서 검증이 안 되는(GIST) 곳은 브라우저로 읽어
+# config/*.json 으로 저장해 두고 넣는다 (헬스케어 후보만, 범위 판정 포함). 2026-11 기준.
+BROWSER_LISTS = {
+    "kst": ("kst_portfolio.json", "한국과학기술지주 포트폴리오", "출연연(한국과학기술지주)", "https://kstholdings.co.kr/kst/portfolio"),
+    "gist": ("gist_portfolio.json", "GIST기술지주 포트폴리오", "GIST", "https://www.gistholdings.net/bbs/board.php?bo_table=portfolio"),
+}
+
+
+def run_browser_list(con, key: str) -> None:
+    import json
+    from .. import config as cfg
+    fname, label, univ, src = BROWSER_LISTS[key]
+    items = json.loads((cfg.ROOT / "config" / fname).read_text(encoding="utf-8"))
+    with db.run_log(con, f"univ:{key}") as st:
+        for x in items:
+            _save(con, src, label, univ, x)
+            cid = db.find_company(con, x["name"])
+            vals = {"scope": x.get("scope"), "scope_reason": x.get("reason")}
+            if x.get("one"):
+                vals["one_liner"] = x["one"]
+            db.set_fields(con, cid, vals, f"{key}-browser", src, "중")
+            for k in x.get("kws") or []:
+                db.add_tag(con, cid, "kw", k, src)
+            st["facts"] += 1
+        con.commit()
+    print(f"{label} {st['facts']}곳 반영")
+
+
+SOURCES = {"ku": run_ku, "snu": run_snu, "kst": lambda con: run_browser_list(con, "kst"), "gist_browser": lambda con: run_browser_list(con, "gist"), **{k: (lambda con, k=k: run_holding(con, k)) for k in HOLDINGS}}
 
 
 DEFAULT_OFF = {"pnu", "gist"}
