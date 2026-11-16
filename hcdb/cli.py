@@ -2,7 +2,7 @@
 import argparse
 
 from . import cards, db, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings
+from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news
 
 
 def main(argv=None):
@@ -76,6 +76,9 @@ def main(argv=None):
     s.add_argument("--dry-run", action="store_true")
     s = sp.add_parser("dart-holdings", help="기술지주 감사보고서(DART) 주석의 출자·투자 기업 명단 (DART_KEY)")
     s.add_argument("--only", nargs="+", help="corp_code 또는 라벨")
+    s = sp.add_parser("holding-news", help="기술지주 자회사·투자 기사 수집(collect) / 추출 결과 넣기(load 파일)")
+    s.add_argument("step", choices=["collect", "load"])
+    s.add_argument("file", nargs="?", help="load: 기사에서 뽑은 회사 JSON")
     s = sp.add_parser("univ", help="대학 기술지주 자회사·창업지원단 동문기업 (헬스케어만)")
     s.add_argument("--only", nargs="+", help="소스 키 (기본: 전부). 예: ku snu")
     sp.add_parser("tips", help="TIPS 선정기업 중 헬스케어·바이오의료 (공개 API) → 이미 투자받음 표시")
@@ -156,6 +159,11 @@ def main(argv=None):
             briefing.run(con, a.q, a.since, a.dry_run)
         case "dart-holdings":
             dart_holdings.run(con, a.only)
+        case "holding-news":
+            if a.step == "collect":
+                holding_news.collect()
+            else:
+                holding_news.load(con, a.file)
         case "univ":
             univ.run(con, a.only)
         case "tips":
