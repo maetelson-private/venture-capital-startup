@@ -93,7 +93,8 @@ v_companies  업력·누적투자금·첫 투자일·팁스·특허 수 등 계�
 | **액셀러레이터·VC 헬스케어 포트폴리오** (퓨처플레이·롯데벤처스·스프링캠프·매쉬업·카카오벤처스) | `portfolio --only futureplay\|lotte\|springcamp\|mashup\|kakao` | 시드이자 '이미 투자받음' 필터 | 없음 |
 | **정책브리핑(korea.kr) 보도자료 첨부 명단** (아기유니콘, 예비유니콘, 초격차, 혁신기업 국가대표, 딥테크 챌린지 등) | `briefing [--q 검색어…] [--since 2019-01-01] [--dry-run]` | 선정 명단 표를 LLM 없이 규칙으로 읽음. 헬스케어 행은 새 기업, 나머지는 DB 에 있는 기업에만 프로그램 태그. 처리한 보도자료는 다음에 건너뜀 | 없음 |
 | 식약처 의료기기 제조·수입업 허가 | `mfds --only mnft` | DB 에 있는 기업에만 허가일·휴폐업을 붙임(업체명만으론 디지털 여부를 몰라 시드로는 안 씀) | DATA_GO_KR_KEY |
-| **롱리스트 카드 페이지** | `cards` | `data/longlist.html` — 검색·키워드 필터·첫 투자 후보만 보기 | – |
+| **롱리스트 카드 페이지** | `cards` | `data/longlist.html` — 검색·키워드·지불자·과제 묶음 필터·첫 투자 후보만 보기 | – |
+| **지불자·과제·사용자 태그** | `tags run [--dry-run --limit 20]` (API) 또는 `tags dump` → 세션 판정 → `tags load 답.json` / `tags nosource` / `tags migrate [답.json]` / `tags group [묶음.json]` / `tags report` | payer(10종 고정 목록)·task(누구의 어떤 문제)·customer(실사용자). 근거는 수집 원문과 홈페이지(fetch 규칙 그대로)에서만. 근거 문장은 원문과 대조해 없으면 '미상'. 근거는 `tag_evidence`, 교차표는 `data/payer_task_report.md`. manual 값은 덮지 않음 | ANTHROPIC_API_KEY (없으면 dump/load) |
 | 업계 언론 과거 기사 | `feeds --archive --pages 60 --since 2023-11-01` | 헬스케어 태그 피드까지 과거 페이지를 훑음 | ANTHROPIC_API_KEY |
 | **빈칸 보강 (Claude 웹 검색)** | `enrich [--limit N]` | 설립일이 빈 기업의 설립일·대표·홈페이지·시도 (출처 URL 기록, 신뢰도 중) | ANTHROPIC_API_KEY |
 | 식약처 혁신의료기기 지정 현황 API | `mfds` | 혁신의료기기 지정 | DATA_GO_KR_KEY + 이 API 활용신청 |

@@ -104,6 +104,24 @@ CREATE TABLE IF NOT EXISTS company_tags (
     PRIMARY KEY (company_id, kind, value)
 );
 
+-- 태그 근거: field_evidence 와 같은 방식(이력 누적, applied=1 이 현재 company_tags 에 반영된 값)에
+-- 근거 문장(quote)을 더함. kind = payer / task / customer / task_group
+-- note: no_source(근거 원천 없음) / no_evidence(원천은 있으나 근거 문장 없음) / legacy(이전 값 보존) / migrate(…)
+CREATE TABLE IF NOT EXISTS tag_evidence (
+    id           INTEGER PRIMARY KEY,
+    company_id   INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    kind         TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    quote        TEXT,
+    source       TEXT NOT NULL,                   -- payer-llm / legacy-news / migrate / manual
+    source_url   TEXT,
+    confidence   TEXT CHECK (confidence IN ('상','중','하') OR confidence IS NULL),
+    note         TEXT,
+    collected_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    applied      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_tagev_ck ON tag_evidence(company_id, kind);
+
 -- ───────────────────────── 4. 자금 ─────────────────────────
 CREATE TABLE IF NOT EXISTS investors (
     id         INTEGER PRIMARY KEY,

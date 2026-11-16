@@ -2,7 +2,7 @@
 import argparse
 
 from . import cards, db, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters
+from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters, payer_task
 
 
 def main(argv=None):
@@ -98,6 +98,18 @@ def main(argv=None):
     s = sp.add_parser("scope", help="Claude 로 범위 판정 (포함/제외/보류)")
     s.add_argument("--redo", action="store_true", help="수기(manual) 판정 외에는 다시 판정")
 
+    s = sp.add_parser("tags", help="지불자·과제·사용자 태그 (원문·홈페이지 근거만, ANTHROPIC_API_KEY)")
+    s.add_argument("step", choices=["run", "dump", "load", "nosource", "migrate", "group", "report"])
+    s.add_argument("file", nargs="?", help="load/migrate: 세션 판정 답 JSON")
+    s.add_argument("--with-b2b", action="store_true", help="dump: 기존 B2B 이관용 기사도 함께")
+    s.add_argument("--limit", type=int)
+    s.add_argument("--dry-run", action="store_true", help="DB 에 쓰지 않고 표만 (홈페이지 캐시는 저장)")
+    s.add_argument("--ids", type=int, nargs="*")
+    s.add_argument("--redo", action="store_true", help="이미 판정한 곳도 다시")
+    s.add_argument("--only-sourced", action="store_true", help="근거 원천이 있는 곳만 (dry-run 표본용)")
+    s.add_argument("--no-fetch", action="store_true", help="홈페이지를 새로 받지 않음")
+    s.add_argument("--workers", type=int, default=4)
+
     s = sp.add_parser("cards", help="롱리스트 카드 HTML (data/longlist.html)")
     s.add_argument("-o", "--out")
 
@@ -189,6 +201,8 @@ def main(argv=None):
             enrich.run(con, a.limit, a.workers)
         case "scope":
             scope.run(con, a.redo)
+        case "tags":
+            payer_task.cli(con, a)
         case "cards":
             cards.run(con, a.out)
         case "filter":

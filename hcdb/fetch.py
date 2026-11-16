@@ -119,8 +119,24 @@ def html_to_text(html: str) -> tuple[str, str | None, str | None]:
     return text, (title or "").strip() or None, pub
 
 
-def fetch_doc(con, url: str, source: str, *, use_render=False, force=False) -> dict | None:
-    """URL 을 가져와 raw_documents 에 저장(캐시 적용). 반환: {'id','url','title','body','published_at'}"""
+def page_links(html: str, base_url: str) -> list[tuple[str, str]]:
+    """같은 호스트로 가는 링크 (주소, 글자) 목록. 하위 페이지(회사소개·서비스) 찾기용."""
+    from urllib.parse import urljoin
+    host = urlparse(base_url).netloc.removeprefix("www.")
+    out, seen = [], set()
+    for a in BeautifulSoup(html, "html.parser").find_all("a", href=True):
+        u = urljoin(base_url, a["href"]).split("#")[0]
+        if urlparse(u).scheme in ("http", "https") and urlparse(u).netloc.removeprefix("www.") == host \
+                and u not in seen:
+            seen.add(u)
+            out.append((u, a.get_text(" ", strip=True)[:40]))
+    return out
+
+
+def fetch_doc(con, url: str, source: str, *, use_render=False, force=False,
+              links: list | None = None) -> dict | None:
+    """URL 을 가져와 raw_documents 에 저장(캐시 적용). 반환: {'id','url','title','body','published_at'}
+    links 에 리스트를 넘기면 새로 받아온 경우에 한해 같은 호스트 링크를 채운다(캐시 적중 시엔 비어 있음)."""
     if not force:
         r = con.execute(
             "SELECT * FROM raw_documents WHERE url=? AND julianday('now') - julianday(fetched_at) < ?",
@@ -137,6 +153,8 @@ def fetch_doc(con, url: str, source: str, *, use_render=False, force=False) -> d
     except (requests.RequestException, Blocked) as e:
         print(f"  ! 수집 실패 {url}: {e}")
         return None
+    if links is not None:
+        links.extend(page_links(html, url))
     body, title, pub = html_to_text(html)
     h = hashlib.sha1(body.encode("utf-8")).hexdigest()
     con.execute(

@@ -79,6 +79,8 @@ VIEW_FIELDS: dict[str, str] = {
 TAG_FIELDS: dict[str, str] = {
     "customer": "고객",
     "payer": "지불 주체",
+    "task": "과제",
+    "task_group": "과제 묶음",
     "kw_task": "키워드(과제)",
     "kw_means": "키워드(수단)",
     "kw_customer": "키워드(고객)",

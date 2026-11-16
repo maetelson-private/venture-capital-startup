@@ -45,8 +45,22 @@ def run(con, path: str, sheet: str | None = None) -> None:
             st["facts"] += db.set_fields(con, cid, vals, "manual", src, conf)
             for k, v in row.items():
                 if k in LABEL_TO_TAG and v:
-                    for t in v.split(","):
-                        db.add_tag(con, cid, LABEL_TO_TAG[k], t, src)
+                    kind = LABEL_TO_TAG[k]
+                    vals = [t.strip() for t in v.split(",") if t.strip()]
+                    if kind in ("payer", "task", "customer"):
+                        # 사람이 넣은 지불자·과제·사용자 → manual 근거로 남겨 tags 명령이 덮지 않게
+                        cur = {r[0] for r in con.execute(
+                            "SELECT value FROM company_tags WHERE company_id=? AND kind=?", (cid, kind))}
+                        if cur == set(vals):
+                            continue  # 엑셀 왕복에서 안 바뀐 값
+                        con.execute("DELETE FROM company_tags WHERE company_id=? AND kind=?", (cid, kind))
+                        con.execute("UPDATE tag_evidence SET applied=0 WHERE company_id=? AND kind=?", (cid, kind))
+                        for t in vals:
+                            con.execute("""INSERT INTO tag_evidence(company_id, kind, value, source, source_url,
+                                           confidence, note, applied) VALUES (?,?,?,?,?,?,?,1)""",
+                                        (cid, kind, t, "manual", src, conf, "manual"))
+                    for t in vals:
+                        db.add_tag(con, cid, kind, t, src)
             for alias in (row.get("이형 표기") or "").split("|"):
                 db.add_alias(con, cid, alias.strip(), src)
             st["docs"] += 1

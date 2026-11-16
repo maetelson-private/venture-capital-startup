@@ -1,6 +1,6 @@
 """롱리스트 카드 HTML (한 파일, 오프라인에서 열림).
 
-대상: 하드필터 '통과' + 범위 '포함'. 카드마다 이름·설립·지역·한 줄 설명·키워드·신호(혁신의료기기·식약처 허가·
+대상: 하드필터 '통과' + 범위 '포함'. 지불자·과제 묶음 필터(tags 명령 결과)도 있다. 카드마다 이름·설립·지역·한 줄 설명·키워드·신호(혁신의료기기·식약처 허가·
 샌드박스·프로그램·투자사)를 보여주고, 검색·키워드·'첫 투자 후보만' 필터와 정렬을 브라우저에서 한다.
 """
 import html
@@ -35,9 +35,11 @@ def collect(con) -> list[dict]:
     for r in rows:
         cid = r["id"]
         tags = con.execute("SELECT kind, value FROM company_tags WHERE company_id=?", (cid,)).fetchall()
-        kws, programs = [], []
+        kws, programs, ptc = [], [], {"payer": [], "task": [], "customer": [], "task_group": []}
         for t in tags:
-            if t["kind"].startswith("kw") and t["value"] not in kws:
+            if t["kind"] in ptc:
+                ptc[t["kind"]].append(t["value"])
+            elif t["kind"].startswith("kw") and t["value"] not in kws:
                 kws.append(t["value"])
             elif t["kind"] == "program":
                 programs.append(t["value"])
@@ -53,6 +55,11 @@ def collect(con) -> list[dict]:
             "sido": (r["sido"] or "").replace("특별시", "").replace("광역시", "").replace("특별자치도", "").replace("도", "")[:4],
             "one": r["one_liner"] or _first_sentence(r["service_summary"]) or _first_sentence(r["bm_summary"]),
             "kws": kws[:5],
+            # 지불자·과제·사용자 (tags 명령). 없으면 미상
+            "payer": ptc["payer"] or ["미상"],
+            "task": (ptc["task"] or [""])[0] if (ptc["task"] or [""])[0] != "미상" else "",
+            "tgroup": (ptc["task_group"] or ["미상"])[0],
+            "user": (ptc["customer"] or [""])[0] if (ptc["customer"] or [""])[0] != "미상" else "",
             "signals": signals,
             "investors": [x for x in (r["investor_names"] or "").split(",") if x][:4],
             "rounds": r["n_rounds"] or 0,
@@ -93,6 +100,8 @@ main{max-width:1240px;margin:0 auto;padding:16px;display:grid;grid-template-colu
 .inv{background:var(--inv-soft);color:var(--inv)}.facts{font-size:12px;color:var(--sub)}.one{font-size:14px}
 .chips{display:flex;flex-wrap:wrap;gap:5px}.chip{font-size:12px;background:var(--chip);border-radius:6px;padding:2px 7px}
 .sig{font-size:11px;border-radius:6px;padding:2px 7px}.sig.reg{background:var(--reg-soft);color:var(--reg)}.sig.prog{background:var(--chip);color:var(--sub)}
+.ptc{font-size:12px;color:var(--sub);display:flex;flex-direction:column;gap:2px}.ptc b{color:var(--ink);font-weight:600}
+.pay{font-size:11px;border-radius:6px;padding:2px 7px;background:var(--accent-soft);color:var(--accent)}.pay.unk{background:var(--chip);color:var(--sub)}
 .warn{font-size:11px;color:var(--warn);background:var(--warn-soft);border-radius:6px;padding:2px 7px;align-self:flex-start}
 .foot{margin-top:auto;font-size:12px;color:var(--sub)}.empty{grid-column:1/-1;text-align:center;color:var(--sub);padding:40px}
 </style></head><body>
@@ -103,6 +112,8 @@ main{max-width:1240px;margin:0 auto;padding:16px;display:grid;grid-template-colu
 <label class="tg"><input type="checkbox" id="first" checked> 첫 투자 후보만 (투자 이력 없음)</label>
 <label class="tg"><input type="checkbox" id="dated"> 설립일 확인된 곳만</label>
 <label class="tg"><input type="checkbox" id="thin"> 정보 부족한 곳도 보기</label>
+<select id="payer"><option value="">지불자 전체</option></select>
+<select id="tgroup"><option value="">과제 묶음 전체</option></select>
 <select id="sort"><option value="new">최근 설립순</option><option value="sig">신호 많은 순</option><option value="name">이름순</option></select>
 </div><div class="kwbar" id="kwbar"></div></div>
 <main id="grid"></main>
@@ -116,25 +127,32 @@ function kwBar(){ const cnt = {}; DATA.forEach(d => d.kws.forEach(k => cnt[k] = 
   $('#kwbar').onclick = e => { const b = e.target.closest('button'); if(!b) return;
     activeKw = activeKw === b.dataset.k ? null : b.dataset.k;
     document.querySelectorAll('#kwbar button').forEach(x => x.classList.toggle('on', x.dataset.k === activeKw)); render(); }; }
+function fillSel(id, vals){ const cnt = {}; vals.forEach(v => cnt[v] = (cnt[v]||0)+1);
+  const el = $('#'+id); Object.entries(cnt).sort((a,b)=>(a[0]==='미상')-(b[0]==='미상') || b[1]-a[1])
+    .forEach(([v,n]) => el.insertAdjacentHTML('beforeend', `<option value="${esc(v)}">${esc(v)} ${n}</option>`)); }
 function card(d){ const facts = [d.founded ? `${d.founded} 설립` : '설립일 미상', d.age != null ? `${d.age}년차` : '', d.sido, d.ceo && `대표 ${d.ceo}`].filter(Boolean).join(' · ');
   const name = d.url ? `<a href="${esc(d.url.startsWith('http')?d.url:'http://'+d.url)}" target="_blank" rel="noopener">${esc(d.name)}</a>` : esc(d.name);
   const badge = d.rounds ? `<span class="badge inv">투자 ${d.rounds}회</span>` : `<span class="badge first">첫 투자 후보</span>`;
   return `<article class="card"><div class="top"><div class="name">${name}</div>${badge}</div>
   <div class="facts">${esc(facts)}</div><div class="one">${esc(d.one || '공개된 서비스 정보 없음')}</div>
   ${d.kws.length ? `<div class="chips">${d.kws.map(k=>`<span class="chip">#${esc(k)}</span>`).join('')}</div>` : ''}
+  <div class="chips">${d.payer.map(p=>`<span class="pay${p==='미상'?' unk':''}">${p==='미상'?'지불자 미상':'💳 '+esc(p)}</span>`).join('')}</div>
+  ${d.task || d.user ? `<div class="ptc">${d.task ? `<span>과제 <b>${esc(d.task)}</b>${d.tgroup!=='미상' ? ' · '+esc(d.tgroup) : ''}</span>` : ''}${d.user ? `<span>사용자 <b>${esc(d.user)}</b></span>` : ''}</div>` : ''}
   ${d.signals.length ? `<div class="chips">${d.signals.map(s=>`<span class="sig ${s.k}">${esc(s.t)}</span>`).join('')}</div>` : ''}
   ${d.check ? `<span class="warn">${esc(d.reason)}</span>` : ''}
   <div class="foot">${d.investors.length ? '투자: ' + esc(d.investors.join(', ')) : ''}</div></article>`; }
 function render(){ const q = $('#q').value.trim().toLowerCase();
   let xs = DATA.filter(d => ($('#thin').checked || !d.thin) && (!$('#first').checked || !d.rounds) && (!$('#dated').checked || d.founded)
     && (!activeKw || d.kws.includes(activeKw))
-    && (!q || [d.name, d.one, d.kws.join(' '), d.signals.map(s=>s.t).join(' ')].join(' ').toLowerCase().includes(q)));
+    && (!$('#payer').value || d.payer.includes($('#payer').value)) && (!$('#tgroup').value || d.tgroup === $('#tgroup').value)
+    && (!q || [d.name, d.one, d.task, d.user, d.payer.join(' '), d.kws.join(' '), d.signals.map(s=>s.t).join(' ')].join(' ').toLowerCase().includes(q)));
   const s = $('#sort').value;
   xs.sort(s === 'name' ? (a,b)=>a.name.localeCompare(b.name,'ko') : s === 'sig' ? (a,b)=>b.signals.length-a.signals.length
        : (a,b)=>(b.founded||'0').localeCompare(a.founded||'0'));
   $('#count').textContent = `${xs.length} / ${DATA.length}곳`;
   $('#grid').innerHTML = xs.length ? xs.map(card).join('') : '<div class="empty">조건에 맞는 회사가 없어요</div>'; }
-['q','first','dated','thin','sort'].forEach(id => $('#'+id).addEventListener('input', render));
+['q','first','dated','thin','sort','payer','tgroup'].forEach(id => $('#'+id).addEventListener('input', render));
+fillSel('payer', DATA.flatMap(d => d.payer)); fillSel('tgroup', DATA.map(d => d.tgroup));
 kwBar(); render();
 </script></body></html>"""
 
