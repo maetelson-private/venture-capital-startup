@@ -21,11 +21,12 @@ DEFAULT_QUERIES = [
 
 
 # ───────────── 발견 ─────────────
-def search_naver(query: str, display=50, start=1) -> list[dict]:
-    r = http_get("https://openapi.naver.com/v1/search/news.json",
-                 params={"query": query, "display": display, "start": start, "sort": "date"},
-                 headers={"X-Naver-Client-Id": config.NAVER_CLIENT_ID,
-                          "X-Naver-Client-Secret": config.NAVER_CLIENT_SECRET},
+def search_naver(query: str, display=50, start=1, sort="date") -> list[dict]:
+    # 2026 검색 API 는 NAVER API HUB(네이버 클라우드)로 이관: 주소·헤더가 바뀜. 값은 API HUB 의 Client ID/Secret
+    r = http_get("https://naverapihub.apigw.ntruss.com/search/v1/news",
+                 params={"query": query, "display": display, "start": start, "sort": sort},
+                 headers={"X-NCP-APIGW-API-KEY-ID": config.NAVER_CLIENT_ID,
+                          "X-NCP-APIGW-API-KEY": config.NAVER_CLIENT_SECRET},
                  check_robots=False)
     out = []
     for it in r.json().get("items", []):

@@ -23,6 +23,9 @@ HOLDINGS = ["연세대기술지주", "연세대 바이오헬스기술지주", "K
             "연구소기업 헬스케어 설립"]
 
 
+MIN_NEW = 5
+
+
 def collect(holdings: list[str] | None = None) -> None:
     naver = False
     if config.NAVER_CLIENT_ID:
@@ -31,19 +34,30 @@ def collect(holdings: list[str] | None = None) -> None:
             naver = True
         except Exception as e:  # noqa: BLE001
             print(f"네이버 검색 실패 → 구글뉴스 RSS 사용 ({str(e)[:60]})")
-    seen, out = set(), []
+    path = config.DATA_DIR / "holding_news.json"
+    # 이전에 모은 기사는 유지하고, 새로 나온 것만 'new': true 로 표시 (추출은 새 것만 하면 된다)
+    out = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    for x in out:
+        x["new"] = False
+    seen = {x["title"] for x in out}
     for h in holdings or HOLDINGS:
         for q in (f"{h} 자회사", f"{h} 투자 헬스케어"):
-            items = search_naver(q, display=100) if naver else search_google_rss(q)
-            for it in items:
-                if it["title"] in seen:
-                    continue
-                seen.add(it["title"])
-                out.append({"holding": h, "title": it["title"], "summary": (it.get("summary") or "")[:300],
-                            "date": it["date"], "url": it["url"]})
-    path = config.DATA_DIR / "holding_news.json"
+            # 네이버는 100건씩 start=1,101,…,901 까지. 한 페이지에서 새 기사가 거의 없으면(MIN_NEW 미만) 그 검색어는 끝
+            for start in (range(1, 1000, 100) if naver else [1]):
+                items = search_naver(q, display=100, start=start, sort="sim") if naver else search_google_rss(q)
+                new = 0
+                for it in items:
+                    if it["title"] in seen:
+                        continue
+                    seen.add(it["title"])
+                    new += 1
+                    out.append({"holding": h, "title": it["title"], "summary": (it.get("summary") or "")[:300],
+                                "date": it["date"], "url": it["url"], "new": True})
+                if new < MIN_NEW or len(items) < 100:
+                    break
+        print(f"  {h}: 누적 {len(out)}건")
     path.write_text(json.dumps(out, ensure_ascii=False, indent=0), encoding="utf-8")
-    print(f"기사 {len(out)}건 → {path}")
+    print(f"기사 {len(out)}건 (이번에 새로 {sum(x['new'] for x in out)}건) → {path}")
 
 
 def load(con, path: str) -> None:
