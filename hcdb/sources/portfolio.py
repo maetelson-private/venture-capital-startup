@@ -147,3 +147,129 @@ def run_d2sf(con, korea_only=True) -> None:
         con.execute("UPDATE investors SET type=coalesce(type,'CVC') WHERE name='네이버 D2SF'")
         con.commit()
     print(f"{st['facts']}곳 반영")
+
+
+# ── 액셀러레이터·VC 헬스케어 포트폴리오 (시드이자 '이미 투자받음' 필터) ─────────────────
+def _flight(html: str) -> str:
+    """Next.js App Router 페이지의 self.__next_f.push([1,"…"]) 조각을 이어 붙인 텍스트."""
+    import json
+    chunks = re.findall(r'self\.__next_f\.push\(\[1,"(.*?)"\]\)</script>', html, re.S)
+    return "".join(json.loads('"' + c + '"') for c in chunks)
+
+
+def _objs(text: str, start_pat: str, need: str | None = None) -> list[dict]:
+    import json
+    dec, out = json.JSONDecoder(), []
+    for m in re.finditer(start_pat, text):
+        try:
+            o, _ = dec.raw_decode(text, m.start())
+        except ValueError:
+            continue
+        if need is None or need in o:
+            out.append(o)
+    return out
+
+
+def futureplay() -> list[dict]:
+    url = "https://futureplay.co/our-companies"
+    text = _flight(http_get(url).text)
+    out = []
+    for o in _objs(text, r'\{"id":\d+,"name":\{"en"'):
+        if any("HEALTH" in ((c.get("content") or {}).get("en") or "") for c in o.get("categories") or []):
+            desc = (o.get("description") or {}).get("ko") or ""
+            out.append({"name": (o["name"].get("ko") or o["name"].get("en") or "").strip(), "alias": o["name"].get("en"),
+                        "ceo": (o.get("representative") or {}).get("ko"), "url": o.get("website"),
+                        "desc": None if desc.startswith("$") else desc[:300]})
+    return out
+
+
+def lotte() -> list[dict]:
+    url = "https://www.lotteventures.com/portfolio"
+    text = _flight(http_get(url).text)
+    out = []
+    for o in _objs(text, r'\{"id":\d+,"name":"', "sectors"):
+        if "areaBio" in o.get("sectors", []):
+            prog = ", ".join(f"{m.get('kind')} {m.get('batchNo') or ''}".strip() for m in o.get("memberships") or [])
+            out.append({"name": o["name"].strip(), "alias": o.get("nameAlt"), "desc": o.get("shortDescription"),
+                        "program": prog})
+    return out
+
+
+def springcamp() -> list[dict]:
+    r = http_get("https://springcamp.co/portfolio")
+    r.encoding = "utf-8"
+    s = BeautifulSoup(r.text, "html.parser")
+    out = []
+    for a in s.select("a.company-card"):
+        cat = a.select_one(".card-category")
+        if cat and "health" in cat.get_text().lower():
+            out.append({"name": a.select_one(".card-name").get_text(strip=True),
+                        "url": a.get("href") if a.get("href", "").startswith("http") else None})
+    return out
+
+
+def mashup() -> list[dict]:
+    r = http_get("https://mashupventures.co/portfolio/")
+    r.encoding = "utf-8"
+    s = BeautifulSoup(r.text, "html.parser")
+    out = []
+    for a in s.select("a.catalog-card"):
+        tags = (a.select_one("p.card-tags").get_text(" ", strip=True) if a.select_one("p.card-tags") else "")
+        if "health" in tags.lower() or "헬스" in tags:
+            d = a.select_one("p.card-description")
+            out.append({"name": a.select_one("h3").get_text(strip=True), "desc": d.get_text(" ", strip=True) if d else None})
+    return out
+
+
+def kakao() -> list[dict]:
+    out, seen = [], set()
+    for page in range(1, 15):
+        r = http_get("https://www.kakao.vc/family", params={"bd68ea8e_page": page} if page > 1 else None)
+        r.encoding = "utf-8"
+        items = [it for it in BeautifulSoup(r.text, "html.parser").select(".w-dyn-item")
+                 if it.select_one("[fs-cmsfilter-field=company]")]
+        new = 0
+        for it in items:
+            g = lambda sel: (it.select_one(sel).get_text(" ", strip=True) if it.select_one(sel) else "")  # noqa: E731
+            name = g("[fs-cmsfilter-field=company]")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            new += 1
+            sectors = " ".join(x.get_text(" ", strip=True) for x in it.select("[fs-cmsfilter-field=sector]"))
+            if "헬스" in sectors:
+                out.append({"name": name, "desc": g(".family-item-preview") or None})
+        if not new:
+            break
+    return out
+
+
+VCS = {  # key: (수집 함수, 투자사 이름, 투자사 유형)
+    "futureplay": (futureplay, "퓨처플레이", "AC"),
+    "lotte": (lotte, "롯데벤처스", "CVC"),
+    "springcamp": (springcamp, "스프링캠프", "AC"),
+    "mashup": (mashup, "매쉬업벤처스", "AC"),
+    "kakao": (kakao, "카카오벤처스", "VC"),
+}
+
+
+def run_vc(con, key: str) -> None:
+    fn, investor, typ = VCS[key]
+    try:
+        items = [x for x in fn() if x.get("name")]
+    except Exception as e:  # noqa: BLE001
+        print(f"{investor}: 실패 {e!r}")
+        return
+    print(f"{investor} 헬스케어 포트폴리오 {len(items)}곳")
+    with db.run_log(con, f"portfolio:{key}") as st:
+        for x in items:
+            name = re.sub(r"\(주\)|㈜|주식회사", "", x["name"]).strip()
+            cid = db.get_or_create_company(con, name, source_url=key)
+            db.add_alias(con, cid, x.get("alias"), key)
+            db.set_fields(con, cid, {"service_summary": x.get("desc"), "ceo": x.get("ceo"), "url": x.get("url")},
+                          f"portfolio:{key}", None, "중")
+            db.add_tag(con, cid, "program", f"{investor} 포트폴리오" + (f" ({x['program']})" if x.get("program") else ""), None)
+            db.add_round(con, cid, "포트폴리오", None, None, [investor], None, "상")
+            st["facts"] += 1
+        con.execute("UPDATE investors SET type=coalesce(type,?) WHERE name=?", (typ, investor))
+        con.commit()

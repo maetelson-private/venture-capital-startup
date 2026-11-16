@@ -2,7 +2,7 @@
 import argparse
 
 from . import cards, db, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news
+from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators
 
 
 def main(argv=None):
@@ -69,7 +69,7 @@ def main(argv=None):
     s = sp.add_parser("kbic", help="보건산업혁신창업센터 창업기업 (~300개사, 디지털헬스케어·의료기기)")
     s.add_argument("--all", action="store_true", help="의약품 분야도 포함")
     s = sp.add_parser("portfolio", help="포트폴리오·보육 기업 (DHP, D.CAMP, NAVER D2SF) → 이미 투자받음 표시")
-    s.add_argument("--only", choices=["dhp", "dcamp", "d2sf"])
+    s.add_argument("--only", choices=["dhp", "dcamp", "d2sf", "futureplay", "lotte", "springcamp", "mashup", "kakao"])
     s = sp.add_parser("briefing", help="정책브리핑(korea.kr) 보도자료 첨부의 선정 명단 (아기유니콘·초격차 등)")
     s.add_argument("--q", nargs="+", help="검색어 (기본: 내장 목록)")
     s.add_argument("--since", default="2019-01-01")
@@ -79,6 +79,8 @@ def main(argv=None):
     s = sp.add_parser("holding-news", help="기술지주 자회사·투자 기사 수집(collect) / 추출 결과 넣기(load 파일)")
     s.add_argument("step", choices=["collect", "load"])
     s.add_argument("file", nargs="?", help="load: 기사에서 뽑은 회사 JSON")
+    s = sp.add_parser("incubators", help="보육·병원 창업·협회 디렉토리 (디지털헬스넷, SW 임상시험, 분당서울대병원, 연구중심병원, 연세대)")
+    s.add_argument("--only", nargs="+", help="dhnet trials snubh rdh yonsei")
     s = sp.add_parser("univ", help="대학 기술지주 자회사·창업지원단 동문기업 (헬스케어만)")
     s.add_argument("--only", nargs="+", help="소스 키 (기본: 전부). 예: ku snu")
     sp.add_parser("tips", help="TIPS 선정기업 중 헬스케어·바이오의료 (공개 API) → 이미 투자받음 표시")
@@ -155,6 +157,9 @@ def main(argv=None):
                 portfolio.run_dcamp(con)
             if a.only in (None, "d2sf"):
                 portfolio.run_d2sf(con)
+            for k in portfolio.VCS:
+                if a.only in (None, k):
+                    portfolio.run_vc(con, k)
         case "briefing":
             briefing.run(con, a.q, a.since, a.dry_run)
         case "dart-holdings":
@@ -164,6 +169,8 @@ def main(argv=None):
                 holding_news.collect()
             else:
                 holding_news.load(con, a.file)
+        case "incubators":
+            incubators.run(con, a.only)
         case "univ":
             univ.run(con, a.only)
         case "tips":

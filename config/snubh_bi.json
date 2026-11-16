@@ -1,0 +1,20 @@
+[
+ {"name": "코넥스트", "ceo": "이우종", "desc": "재조합 collagenase", "url": "https://connext.co.kr/", "scope": "보류", "reason": "바이오 의약 소재"},
+ {"name": "몰림", "ceo": "박현수", "desc": "분자영상 서비스", "url": "https://www.molim.xyz/", "scope": "포함", "reason": "분자영상 분석 서비스", "one": "분자영상 분석 서비스", "kws": ["의료영상", "분자영상"]},
+ {"name": "클롭", "ceo": "박상준, 김현준", "desc": "안저 검사 솔루션, 애프터눈", "url": "https://www.clop.ai/", "scope": "포함", "reason": "안저 검사 솔루션", "one": "AI 안저 검사 솔루션 '애프터눈'", "kws": ["AI영상진단", "안과"]},
+ {"name": "프나시어", "ceo": "신현우", "desc": "약물전달 플랫폼(DDS)", "url": "http://pnaseer.com/", "scope": "보류", "reason": "약물전달 플랫폼, 디지털 요소 없음"},
+ {"name": "메디이미지", "ceo": "정슬기", "desc": "AI 기반 뇌혈관 질환 진단 및 분석, 뉴플로우", "url": "https://mediimg.com/", "scope": "포함", "reason": "AI 뇌혈관 진단", "one": "AI 뇌혈관 질환 진단·분석 '뉴플로우'", "kws": ["AI영상진단", "뇌혈관"]},
+ {"name": "바이오뉴트리온", "ceo": "김주영", "desc": "개인 맞춤형 디지털 치료 솔루션, 닥터코치", "url": "https://www.bionutrion.kr/", "scope": "포함", "reason": "디지털 치료 솔루션", "one": "맞춤형 디지털 치료 솔루션 '닥터코치'", "kws": ["디지털치료제", "만성질환"]},
+ {"name": "코로로직", "ceo": "황경래", "desc": "AI 기반 관상동맥 조영 영상 프레임 보간 솔루션", "url": "https://www.corologic.io/", "scope": "포함", "reason": "AI 심혈관 영상", "one": "저선량 관상동맥 조영영상 AI 복원", "kws": ["AI영상진단", "심혈관"]},
+ {"name": "디닷케어", "ceo": "허수진", "desc": "AI 기반 수면 분석 장치", "url": "http://www.alzam.co.kr/", "scope": "포함", "reason": "AI 수면 분석 기기", "one": "AI 기반 수면 분석 장치", "kws": ["수면", "디바이스"]},
+ {"name": "플랜비포유", "ceo": "김기웅", "desc": "뇌건강관리 서비스", "url": "https://planb4u.kr/", "scope": "포함", "reason": "뇌건강·치매 예방 관리 서비스", "one": "뇌건강 관리 서비스", "kws": ["치매", "뇌건강"]},
+ {"name": "엠비아", "ceo": "최동주", "desc": "진단, 치료 및 의료 전달을 위한 AI 플랫폼", "scope": "포함", "reason": "의료 AI 플랫폼", "one": "진단·치료·의료전달 AI 플랫폼", "kws": ["의료AI"]},
+ {"name": "센소리큐어", "ceo": "최병윤, 김봉직", "desc": "난청 진단 시스템", "scope": "포함", "reason": "난청 진단 기기", "one": "난청 진단 시스템", "kws": ["난청", "진단기기"]},
+ {"name": "알에스리햅", "ceo": "류주석", "desc": "연하장애 치료 및 재활 의료기기", "url": "https://www.rsrehab.com/kr", "scope": "포함", "reason": "재활 의료기기", "one": "연하장애 치료·재활 의료기기", "kws": ["재활", "연하장애"]},
+ {"name": "지브레인", "ceo": "윤창호", "desc": "개인맞춤 반응형 불면증 인지행동-신경조절 디지털 치료제", "scope": "포함", "reason": "디지털 치료제", "one": "불면증 인지행동·신경조절 디지털치료제", "kws": ["디지털치료제", "수면"]},
+ {"name": "알피", "ceo": "김중희", "desc": "심전도 분석 및 판독 솔루션, ECG Buddy", "url": "https://www.arpi.ai/ko/about/company", "scope": "포함", "reason": "AI 심전도 판독", "one": "AI 심전도 분석·판독 'ECG Buddy'", "kws": ["심전도", "의료AI"]},
+ {"name": "테트라시그넘", "ceo": "전상훈", "desc": "XR 메디컬 솔루션", "url": "https://www.tetrasignum.kr/", "scope": "포함", "reason": "XR 의료 솔루션", "one": "XR 메디컬 솔루션", "kws": ["XR", "수술"]},
+ {"name": "헬스온클라우드", "ceo": "박억숭", "desc": "원격의료 및 의료교육 플랫폼", "url": "https://healthoncloud.global/", "scope": "포함", "reason": "원격의료 플랫폼", "one": "원격의료·의료교육 플랫폼", "kws": ["원격의료", "의료교육"]},
+ {"name": "식지피티", "ceo": "김명주, 김세중", "desc": "환자 맞춤형 AI 헬스케어 솔루션, 케어지피티", "url": "https://sickgpt.ai/", "scope": "포함", "reason": "환자 맞춤형 AI 헬스케어", "one": "환자 맞춤형 AI 헬스케어 '케어지피티'", "kws": ["의료AI", "만성질환"]},
+ {"name": "스타씨씨랩", "ceo": "우창규", "desc": "첨단 비임상 시험 서비스 제공", "scope": "보류", "reason": "비임상 시험 서비스"}
+]

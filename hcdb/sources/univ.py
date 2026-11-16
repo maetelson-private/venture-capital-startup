@@ -416,6 +416,7 @@ def run_holding(con, key: str) -> None:
 BROWSER_LISTS = {
     "kst": ("kst_portfolio.json", "한국과학기술지주 포트폴리오", "출연연(한국과학기술지주)", "https://kstholdings.co.kr/kst/portfolio"),
     "gist": ("gist_portfolio.json", "GIST기술지주 포트폴리오", "GIST", "https://www.gistholdings.net/bbs/board.php?bo_table=portfolio"),
+    "snubh": ("snubh_bi.json", "분당서울대병원 창업보육센터", "분당서울대병원", "https://bri.snubh.org/bizIncuCenter/conts/102011002000000.do"),
 }
 
 
@@ -439,7 +440,7 @@ def run_browser_list(con, key: str) -> None:
     print(f"{label} {st['facts']}곳 반영")
 
 
-SOURCES = {"ku": run_ku, "snu": run_snu, "kst": lambda con: run_browser_list(con, "kst"), "gist_browser": lambda con: run_browser_list(con, "gist"), **{k: (lambda con, k=k: run_holding(con, k)) for k in HOLDINGS}}
+SOURCES = {"ku": run_ku, "snu": run_snu, "kst": lambda con: run_browser_list(con, "kst"), "gist_browser": lambda con: run_browser_list(con, "gist"), "snubh_browser": lambda con: run_browser_list(con, "snubh"), **{k: (lambda con, k=k: run_holding(con, k)) for k in HOLDINGS}}
 
 
 DEFAULT_OFF = {"pnu", "gist"}

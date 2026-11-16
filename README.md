@@ -88,6 +88,9 @@ v_companies  업력·누적투자금·첫 투자일·팁스·특허 수 등 계�
 | **대학 기술지주 자회사·창업지원단 동문기업** (고려대·서울대·미래과학(KAIST·UNIST·GIST·DGIST)·POSTECH·UNIST·한양·이화·충남·전남·강원·전북연합·가톨릭·중앙 기술지주, 서울대 동문기업) | `univ [--only ku snu sth mirae …]` | 소개·홈페이지·설립일·소속 대학, program 태그. 기술지주 출자는 VC 라운드가 아니라서 '첫 투자 후보'로 남김 | 없음 |
 | **기술지주 감사보고서 (DART)** — 한국과학기술지주·고려대·미래과학 등 DART 에 감사보고서를 내는 곳 | `dart-holdings [--only corp_code…]` | 주석의 매도가능증권·지분법투자주식·투자유가증권 표에서 투자기업 이름 → DB 에 있으면 '○○ 출자' 태그, 이름에 의료 단서가 있으면 새 기업. 나머지는 `data/dart_holdings_review.json` | DART_KEY |
 | **기술지주 관련 기사** (연세·KAIST·부산·성균관·경북·인하 등 웹 목록이 없는 곳 포함 29개 검색어) | `holding-news collect` → 추출 → `holding-news load 파일` | 기사 제목에 기술지주와 함께 나온 헬스케어 기업. 추출은 사람·Claude 가 하고(키 없으면 세션에서), 제목에 지주가 직접 나온 것만 넣음. 전체 포트폴리오는 아님 | 없음 (NAVER_* 있으면 네이버) |
+| **보육·병원 창업·협회 디렉토리** | `incubators [--only dhnet trials rdh yonsei bi]` | `dhnet` 디지털헬스산업협회 기업 디렉토리(316, 설립일·대표·인원) / `trials` 식약처 SW 의료기기 임상시험 승인 의뢰사(KHIDI, 키 없이) / `rdh` 연구중심병원 창업기업(20개 병원) / `yonsei` 연세대 창업지원단 입주 / `bi` 중기부 창업보육센터 입주기업(data.go.kr 15122804, 의료·건강 최근 6년) | `bi` 만 DATA_GO_KR_KEY + 활용신청 |
+| 분당서울대병원 창업보육센터 (브라우저로 읽음, 인증서 문제) | `univ --only snubh_browser` | `config/snubh_bi.json` | 없음 |
+| **액셀러레이터·VC 헬스케어 포트폴리오** (퓨처플레이·롯데벤처스·스프링캠프·매쉬업·카카오벤처스) | `portfolio --only futureplay\|lotte\|springcamp\|mashup\|kakao` | 시드이자 '이미 투자받음' 필터 | 없음 |
 | **정책브리핑(korea.kr) 보도자료 첨부 명단** (아기유니콘, 예비유니콘, 초격차, 혁신기업 국가대표, 딥테크 챌린지 등) | `briefing [--q 검색어…] [--since 2019-01-01] [--dry-run]` | 선정 명단 표를 LLM 없이 규칙으로 읽음. 헬스케어 행은 새 기업, 나머지는 DB 에 있는 기업에만 프로그램 태그. 처리한 보도자료는 다음에 건너뜀 | 없음 |
 | 식약처 의료기기 제조·수입업 허가 | `mfds --only mnft` | DB 에 있는 기업에만 허가일·휴폐업을 붙임(업체명만으론 디지털 여부를 몰라 시드로는 안 씀) | DATA_GO_KR_KEY |
 | **롱리스트 카드 페이지** | `cards` | `data/longlist.html` — 검색·키워드 필터·첫 투자 후보만 보기 | – |
