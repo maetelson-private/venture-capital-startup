@@ -18,7 +18,9 @@ def norm_name(name: str) -> str:
     return s.lower()
 
 
-_SUFFIX_RE = re.compile(r"(코리아|글로벌|korea|global)$")
+_SUFFIX_RE = re.compile(r"(코리아|글로벌|korea|global|팀|team)$")
+# '카이(KHAI)센터' → '카이센터', '뉴다이브(Neudive Inc.)' → '뉴다이브'. 괄호 속에 한글이 있으면(사람 이름·지사명 등) 남긴다
+_PAREN_RE = re.compile(r"\([^)가-힣]*\)|\[[^\]가-힣]*\]")
 # 모음 ㅐ→ㅔ, ㅒ→ㅖ (중성 인덱스 1→5, 3→7). '메디밴스'·'메디벤스', '에이치앤비'·'에이치엔비'를 같게 본다
 _VOWEL = {1: 5, 3: 7}
 
@@ -36,9 +38,9 @@ def _fold_vowels(s: str) -> str:
 
 def variant_key(name: str) -> str:
     """표기 차이를 한 번 더 접은 비교키 (중복 후보 찾기·매칭 보조용).
-    norm_name 에 더해 끝의 '코리아·글로벌' 을 떼고 ㅐ/ㅔ·ㅒ/ㅖ 를 같게 본다.
+    norm_name 에 더해 괄호 속 표기를 빼고, 끝의 '코리아·글로벌·팀' 을 떼고, ㅐ/ㅔ·ㅒ/ㅖ 를 같게 본다.
     3글자 미만이 되면 오탐이 많아 빈 문자열을 돌려준다."""
-    k = norm_name(name)
+    k = norm_name(_PAREN_RE.sub("", name or "") or name)
     stripped = _SUFFIX_RE.sub("", k)
     k = _fold_vowels(stripped if len(stripped) >= 2 else k)
     return k if len(k) >= 3 else ""
