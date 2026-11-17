@@ -351,3 +351,134 @@ def run_extra(con, download=False) -> None:
 
 
 SOURCES["extra"] = run_extra
+
+
+# ── 창업기업확인서 발급기업 (창업진흥원, data.go.kr 15125362, 활용신청 필요) ─────────────────
+CERT = "https://apis.data.go.kr/B552735/kisedCertService01"
+CERT_SRC = "https://www.data.go.kr/data/15125362/openapi.do"
+
+
+def _cert_all(op: str) -> list[dict]:
+    out, page = [], 1
+    while True:
+        js = http_get(f"{CERT}/{op}", check_robots=False, params={
+            "serviceKey": config.DATA_GO_KR_KEY, "page": page, "perPage": 1000, "returnType": "json"}).json()
+        out += js.get("data") or []
+        if page * 1000 >= int(js.get("totalCount") or 0) or not js.get("data"):
+            return out
+        page += 1
+
+
+def run_cert(con, download=False) -> None:
+    """창업기업확인서 = 업력 7년 이하 공식 확인. (1) 등록 제품이 의료·헬스케어인 기업을 시드로,
+    (2) 이미 DB 에 있는 기업은 사명이 한 곳과만 맞을 때 사업자번호를 채우고 '창업기업 확인' 태그."""
+    from ..normalize import norm_name
+    prods = _cert_all("getProductInformation01")
+    by_brno: dict[str, dict] = {}
+    for p in prods:
+        if is_health(p.get("manu_nm")) and not _NOT.search(p.get("manu_nm") or ""):
+            b = by_brno.setdefault(p["brno"], {**p, "items": []})
+            b["items"].append(p.get("manu_nm"))
+    print(f"창업기업 등록 제품 {len(prods):,}개 중 의료·헬스케어 기업 {len(by_brno)}곳")
+    with db.run_log(con, "od:cert") as st:
+        for b, p in by_brno.items():
+            x = {"name": _name(p["ntrp_nm"]), "biz_no": b, "url": p.get("hmpg"), "sido": p.get("lwdg_nm"),
+                 "service_summary": "; ".join(dict.fromkeys(p["items"]))[:300]}
+            _seed(con, "od:cert", CERT_SRC, x, f"창업기업 확인 ({p.get('confmdoc_isu_dt', '')[:4]}, 7년 이하)", "상")
+            st["facts"] += 1
+        con.commit()
+        corps = _cert_all("getCorporateInformation01")
+        names: dict[str, list[dict]] = {}
+        for c in corps:
+            names.setdefault(norm_name(c.get("ntrp_nm")), []).append(c)
+        hit = 0
+        for row in con.execute("SELECT id FROM companies").fetchall():
+            keys = {r[0] for r in con.execute("SELECT alias_norm FROM company_aliases WHERE company_id=?", (row["id"],))}
+            cands = {c["brno"]: c for k in keys for c in names.get(k, [])}
+            if len(cands) == 1:
+                c = next(iter(cands.values()))
+                db.set_field(con, row["id"], "biz_no", c["brno"], "od:cert", CERT_SRC, "중")
+                db.add_tag(con, row["id"], "program", f"창업기업 확인 ({c.get('confmdoc_isu_dt', '')[:4]}, 7년 이하)", CERT_SRC)
+                hit += 1
+        st["docs"] = hit
+        con.commit()
+    print(f"제품 기준 {st['facts']}곳 반영, 확인기업 {len(corps):,}곳 중 DB 기업과 일치 {hit}곳 (사업자번호·7년 이하 표시)")
+
+
+# ── 의료기기 GMP 지정현황 (식약처, data.go.kr 15058930, 활용신청 필요) ─────────────────────
+GMP = "https://apis.data.go.kr/1471000/MdlpGmpAppnSttusInfoService03/getCompanyNameList03"
+GMP_SRC = "https://www.data.go.kr/data/15058930/openapi.do"
+
+
+def run_gmp(con, download=False, recent_years: int = 3) -> None:
+    """GMP 적합인정은 품목허가보다 먼저 받는다 → 업체별 '첫 적합인정일'이 최근 N년인 국내 제조업체 = 신규 의료기기 회사."""
+    rows, page = [], 1
+    while True:
+        js = http_get(GMP, check_robots=False, params={"serviceKey": config.DATA_GO_KR_KEY, "pageNo": page,
+                                                        "numOfRows": 500, "type": "json"}).json()  # 최대 500
+        items = (js.get("body") or {}).get("items") or []
+        rows += [i.get("item", i) for i in items]
+        if (js.get("header") or {}).get("resultCode") not in (None, "00"):
+            raise RuntimeError(f"GMP API 오류: {(js.get('header') or {}).get('resultMsg')}")
+        if page * 500 >= int((js.get("body") or {}).get("totalCount") or 0) or not items:
+            break
+        page += 1
+    first: dict[str, dict] = {}
+    for r in rows:
+        if r.get("COB_FLAG_NAME") != "제조업" or not r.get("BRNO"):
+            continue
+        d = r.get("FIT_CERTF_DATE") or r.get("PERMIT_DATE") or ""
+        if not d:
+            continue
+        cur = first.get(r["BRNO"])
+        if cur is None or d < cur["_d"]:
+            first[r["BRNO"]] = {**r, "_d": d}
+    cutoff = f"{date.today().year - recent_years}{date.today():%m%d}"
+    new = {b: r for b, r in first.items() if r["_d"] >= cutoff and "(유)" not in (r.get("ENTP_NAME") or "")}
+    print(f"GMP 지정 {len(rows):,}건, 제조업체 {len(first):,}곳 중 첫 적합인정이 최근 {recent_years}년 {len(new)}곳")
+    with db.run_log(con, "od:gmp") as st:
+        for b, r in new.items():
+            x = {"name": _name(r["ENTP_NAME"]), "biz_no": b, "sido": (r.get("ENTP_ADDR1") or "").split(" ")[0] or None}
+            cid = _seed(con, "od:gmp", GMP_SRC, x, f"의료기기 GMP 첫 적합인정 {r['_d'][:4]}", "상")
+            db.upsert_row(con, "regulatory", {"company_id": cid, "product": "의료기기 제조 GMP", "kind": "GMP적합인정",
+                                              "status": r.get("PROGRESS_STATUS_NAME"), "event_date": norm_date(r["_d"]),
+                                              "source_url": GMP_SRC})
+            st["facts"] += 1
+        con.commit()
+    print(f"{st['facts']}곳 반영")
+
+
+SOURCES["cert"] = run_cert
+SOURCES["gmp"] = run_gmp
+
+
+def gmp_items(con) -> None:
+    """GMP 로 새로 들어온 회사(이름만 있음)에 GMP 품목명을 붙여 범위 판정이 가능하게 한다 (업체당 1회 호출)."""
+    url = "https://apis.data.go.kr/1471000/MdlpGmpAppnSttusInfoService03/getItemGroupList03"
+    rows = con.execute("""SELECT c.id, c.name FROM companies c JOIN company_tags t ON t.company_id=c.id
+        WHERE t.value LIKE '의료기기 GMP 첫 적합인정%' AND c.service_summary IS NULL""").fetchall()
+    n = 0
+    with db.run_log(con, "od:gmp-items") as st:
+        for r in rows:
+            alias = con.execute("SELECT alias FROM company_aliases WHERE company_id=? ORDER BY length(alias) DESC",
+                                (r["id"],)).fetchone()
+            try:
+                js = http_get(url, check_robots=False, params={"serviceKey": config.DATA_GO_KR_KEY, "pageNo": 1,
+                                                               "numOfRows": 100, "type": "json",
+                                                               "entp_name": alias[0] if alias else r["name"]}).json()
+            except Exception:  # noqa: BLE001
+                continue
+            items = [i.get("item", i) for i in ((js.get("body") or {}).get("items") or [])]
+            names = list(dict.fromkeys(f"{i.get('ITEM_GRP_NAME') or ''}/{i.get('ITEM_NAME') or ''}".strip("/")
+                                       for i in items if i.get("ITEM_NAME")))
+            if names:
+                db.set_field(con, r["id"], "service_summary", "; ".join(names)[:300], "od:gmp", GMP_SRC, "상")
+                n += 1
+            if n % 50 == 0:
+                con.commit()
+        st["facts"] = n
+        con.commit()
+    print(f"GMP 신규 업체 {len(rows)}곳 중 품목명 붙임 {n}곳")
+
+
+SOURCES["gmp_items"] = lambda con, download=False: gmp_items(con)
