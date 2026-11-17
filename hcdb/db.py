@@ -122,19 +122,22 @@ def merge_companies(con, keep_id: int, drop_id: int) -> dict:
     - keep 이 비어 있는 칸은 drop 값으로 채운다(근거 행도 함께 옮겨져 applied 로 둔다).
     - 둘 다 값이 있고 다르면 keep 값을 유지하고 drop 쪽 근거는 applied=0 으로 남긴다.
       단 설립일이 다르면 어느 쪽도 확정하지 않는다: 칸을 비우고 두 근거를 모두 남긴 뒤 메모.
-    - 지불자·과제 태그는 다시 판정하도록 비운다(근거 이력은 남김).
+    - 지불자·과제·사용자 태그는 다시 판정하지 않고, 판정이 더 단단한 쪽(_tag_rank)을 남긴다. 같으면 keep 쪽.
     반환: {'filled': [...], 'kept': [...], 'founded_conflict': (keep값, drop값) | None}"""
     keep = dict(con.execute("SELECT * FROM companies WHERE id=?", (keep_id,)).fetchone())
     drop = dict(con.execute("SELECT * FROM companies WHERE id=?", (drop_id,)).fetchone())
     drop_ev = [r[0] for r in con.execute(
         "SELECT id FROM field_evidence WHERE company_id=? AND applied=1", (drop_id,))]
+    tag_ev = {k: con.execute("SELECT id, kind, value, source, source_url, basis FROM tag_evidence "
+                             "WHERE company_id=? AND applied=1", (c,)).fetchall()
+              for k, c in (("keep", keep_id), ("drop", drop_id))}
     tables = [r[0] for r in con.execute(
         "SELECT m.name FROM sqlite_master m WHERE type='table' AND sql LIKE '%company_id%'")]
     for t in tables:
         con.execute(f"UPDATE OR IGNORE {t} SET company_id=? WHERE company_id=?", (keep_id, drop_id))
         con.execute(f"DELETE FROM {t} WHERE company_id=?", (drop_id,))
     con.execute("DELETE FROM companies WHERE id=?", (drop_id,))
-    out = {"filled": [], "kept": [], "founded_conflict": None}
+    out = {"filled": [], "kept": [], "founded_conflict": None, "tags": {}}
     for f in COMPANY_FIELDS:
         if f in _NO_FILL or drop.get(f) in (None, ""):
             continue
@@ -149,21 +152,41 @@ def merge_companies(con, keep_id: int, drop_id: int) -> dict:
         if f == "founded_date":
             con.execute("UPDATE companies SET founded_date=NULL WHERE id=?", (keep_id,))
             con.execute("UPDATE field_evidence SET applied=0 WHERE company_id=? AND field='founded_date'", (keep_id,))
-            con.execute("UPDATE companies SET notes=coalesce(notes||' / ','')||? WHERE id=?",
-                        (f"[설립일 충돌] 병합 전 {keep[f]} / {drop[f]} — 국민연금·국세청 대조로 정함", keep_id))
             out["founded_conflict"] = (keep[f], drop[f])
         else:
             con.execute(f"UPDATE field_evidence SET applied=0 WHERE field=? AND id IN ({','.join('?' * len(drop_ev)) or 'NULL'})",
                         (f, *drop_ev))
             out["kept"].append(f)
-    # 태그 다시 판정 대상으로 (manual 근거는 건드리지 않음)
-    for kind in ("payer", "task", "customer", "task_group"):
-        if con.execute("SELECT 1 FROM tag_evidence WHERE company_id=? AND kind=? AND applied=1 AND source='manual'",
-                       (keep_id, kind)).fetchone():
+    if out["founded_conflict"]:  # notes 칸 채우기(위 루프)가 덮지 않도록 루프가 끝난 뒤 붙인다
+        k, d = out["founded_conflict"]
+        con.execute("UPDATE companies SET notes=coalesce(notes||' / ','')||? WHERE id=?",
+                    (f"[설립일 충돌] 병합 전 {k} / {d} — 국민연금·국세청 대조로 정함", keep_id))
+    # 태그: 다시 판정하지 않고 이미 있는 판정 중 한쪽을 고른다 (근거 이력은 모두 남김)
+    for kind in TAG_KINDS:
+        side = {k: [r for r in tag_ev[k] if r["kind"] == kind] for k in ("keep", "drop")}
+        pick = max(("keep", "drop"), key=lambda k: (_tag_rank(side[k]), k == "keep"))
+        lose = [r["id"] for k in ("keep", "drop") if k != pick for r in side[k]]
+        if not lose:
             continue
-        con.execute("UPDATE tag_evidence SET applied=0 WHERE company_id=? AND kind=?", (keep_id, kind))
+        con.execute(f"UPDATE tag_evidence SET applied=0 WHERE id IN ({','.join('?' * len(lose))})", lose)
         con.execute("DELETE FROM company_tags WHERE company_id=? AND kind=?", (keep_id, kind))
+        for r in side[pick]:
+            add_tag(con, keep_id, kind, r["value"], r["source_url"])
+        out["tags"][kind] = pick
     return out
+
+
+TAG_KINDS = ("payer", "task", "customer", "task_group", "customer_type")
+
+
+def _tag_rank(rows) -> int:
+    """병합 때 어느 쪽 태그 판정을 남길지: manual > 근거 > 추정·기본값 > 근거 없음 > 없음."""
+    vals = [r for r in rows if r["value"] not in ("근거 없음", "미상")]
+    if any(r["source"] == "manual" for r in rows):
+        return 4
+    if any(r["basis"] not in ("추정", "기본값") for r in vals):
+        return 3
+    return 2 if vals else (1 if rows else 0)
 
 
 # ───────────── 근거 기반 값 채택 ─────────────
