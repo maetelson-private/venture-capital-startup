@@ -51,7 +51,8 @@ def collect(con) -> list[dict]:
             "id": cid,
             "name": _display(r["name"]),
             "founded": (r["founded_date"] or "")[:7],
-            "age": r["age_years"],
+            # 설립일이 미래면(예정일이 설립일 칸에 들어간 경우) 음수 업력을 보이지 않는다
+            "age": r["age_years"] if r["age_years"] is None or r["age_years"] >= 0 else None,
             "sido": (r["sido"] or "").replace("특별시", "").replace("광역시", "").replace("특별자치도", "").replace("도", "")[:4],
             "one": r["one_liner"] or _first_sentence(r["service_summary"]) or _first_sentence(r["bm_summary"]),
             "kws": kws[:5],
@@ -66,9 +67,10 @@ def collect(con) -> list[dict]:
             "url": r["url"] or "",
             "ceo": r["ceo"] or "",
             "conf": r["confidence"] or "",
-            # 밸류 미상은 거의 전부라 표시하지 않고, 설립일 미상만 경고
-            "check": not r["founded_date"],
-            "reason": "설립일 미상 — 업력 확인 필요",
+            # 밸류 미상은 거의 전부라 표시하지 않고, 업력을 알 수 없을 때만 경고
+            "check": r["age_years"] is None or r["age_years"] < 0,
+            "reason": ("설립일 미상 — 업력 확인 필요" if r["age_years"] is None
+                       else f"설립일 {r['founded_date']} 이 미래 — 예정일로 보임, 확인 필요"),
             # 서비스 정보가 전혀 없는 곳(빈 KBIC 프로필 등)은 기본으로 숨김
             "thin": not (r["one_liner"] or r["service_summary"] or r["bm_summary"] or reg),
         })
