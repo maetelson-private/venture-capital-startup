@@ -1,7 +1,7 @@
 """python -m hcdb <명령>"""
 import argparse
 
-from . import cards, db, export, filters
+from . import cards, db, dupes, export, filters
 from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters, payer_task
 
 
@@ -119,6 +119,8 @@ def main(argv=None):
     s.add_argument("-o", "--out")
     s.add_argument("--template", action="store_true", help="빈 입력 양식만")
 
+    sp.add_parser("dupes", help="이름 중복 후보 목록 (data/dupe_candidates.md). 병합은 하지 않음")
+
     s = sp.add_parser("merge", help="중복 기업 병합")
     s.add_argument("keep_id", type=int)
     s.add_argument("drop_id", type=int)
@@ -209,6 +211,8 @@ def main(argv=None):
             filters.run(con)
         case "export":
             export.run(con, a.out, a.template)
+        case "dupes":
+            dupes.run(con)
         case "merge":
             db.merge_companies(con, a.keep_id, a.drop_id)
             con.commit()

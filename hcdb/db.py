@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import config
 from .fields import COMPANY_FIELDS
-from .normalize import norm_biz_no, norm_name
+from .normalize import norm_biz_no, norm_name, variant_key
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 
@@ -25,6 +25,7 @@ _MIGRATIONS = [
     ("patents", "ipc", "TEXT"),
     ("patents", "applicants", "TEXT"),
     ("companies", "one_liner", "TEXT"),
+    ("company_aliases", "alias_variant", "TEXT"),   # normalize.variant_key — 표기 차이 매칭 보조
 ]
 
 
@@ -34,6 +35,10 @@ def init(con: sqlite3.Connection) -> None:
         cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
         if col not in cols:
             con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+    con.execute("CREATE INDEX IF NOT EXISTS ix_alias_variant ON company_aliases(alias_variant)")
+    todo = con.execute("SELECT rowid, alias FROM company_aliases WHERE alias_variant IS NULL").fetchall()
+    for r in todo:
+        con.execute("UPDATE company_aliases SET alias_variant=? WHERE rowid=?", (variant_key(r["alias"]), r["rowid"]))
     con.commit()
 
 
@@ -73,6 +78,12 @@ def find_company(con, name: str | None = None, biz_no: str | None = None) -> int
         # 동명 기업이 여러 개면 자동 매칭하지 않음 → 새로 만들지 않고 None
         if len(r) > 1:
             return None
+        # 표기 차이(ㅐ/ㅔ, '코리아·글로벌' 접미어)만 다른 곳이 정확히 한 곳이면 같은 회사로 본다
+        vk = variant_key(name or "")
+        if vk:
+            r = con.execute("SELECT DISTINCT company_id FROM company_aliases WHERE alias_variant=?", (vk,)).fetchall()
+            if len(r) == 1:
+                return r[0]["company_id"]
     return None
 
 
@@ -95,19 +106,62 @@ def get_or_create_company(con, name: str, biz_no: str | None = None, source_url:
 def add_alias(con, company_id: int, alias: str | None, source_url: str | None = None) -> None:
     if alias and norm_name(alias):
         con.execute(
-            "INSERT OR IGNORE INTO company_aliases(company_id, alias, alias_norm, source_url) VALUES (?,?,?,?)",
-            (company_id, alias.strip(), norm_name(alias), source_url),
+            "INSERT OR IGNORE INTO company_aliases(company_id, alias, alias_norm, source_url, alias_variant) "
+            "VALUES (?,?,?,?,?)",
+            (company_id, alias.strip(), norm_name(alias), source_url, variant_key(alias)),
         )
 
 
-def merge_companies(con, keep_id: int, drop_id: int) -> None:
-    """중복 기업 병합: drop 의 자식 행을 keep 으로 옮기고 drop 삭제."""
+_NO_FILL = {"hard_filter", "hard_filter_reason"}  # 병합 뒤 다시 판정하는 칸
+
+
+def merge_companies(con, keep_id: int, drop_id: int) -> dict:
+    """중복 기업 병합: drop 의 자식 행을 keep 으로 옮기고 drop 삭제.
+    - keep 이 비어 있는 칸은 drop 값으로 채운다(근거 행도 함께 옮겨져 applied 로 둔다).
+    - 둘 다 값이 있고 다르면 keep 값을 유지하고 drop 쪽 근거는 applied=0 으로 남긴다.
+      단 설립일이 다르면 어느 쪽도 확정하지 않는다: 칸을 비우고 두 근거를 모두 남긴 뒤 메모.
+    - 지불자·과제 태그는 다시 판정하도록 비운다(근거 이력은 남김).
+    반환: {'filled': [...], 'kept': [...], 'founded_conflict': (keep값, drop값) | None}"""
+    keep = dict(con.execute("SELECT * FROM companies WHERE id=?", (keep_id,)).fetchone())
+    drop = dict(con.execute("SELECT * FROM companies WHERE id=?", (drop_id,)).fetchone())
+    drop_ev = [r[0] for r in con.execute(
+        "SELECT id FROM field_evidence WHERE company_id=? AND applied=1", (drop_id,))]
     tables = [r[0] for r in con.execute(
         "SELECT m.name FROM sqlite_master m WHERE type='table' AND sql LIKE '%company_id%'")]
     for t in tables:
         con.execute(f"UPDATE OR IGNORE {t} SET company_id=? WHERE company_id=?", (keep_id, drop_id))
         con.execute(f"DELETE FROM {t} WHERE company_id=?", (drop_id,))
     con.execute("DELETE FROM companies WHERE id=?", (drop_id,))
+    out = {"filled": [], "kept": [], "founded_conflict": None}
+    for f in COMPANY_FIELDS:
+        if f in _NO_FILL or drop.get(f) in (None, ""):
+            continue
+        if keep.get(f) in (None, ""):
+            con.execute(f"UPDATE companies SET {f}=? WHERE id=?", (drop[f], keep_id))
+            out["filled"].append(f)
+            continue  # drop 의 applied 근거가 그대로 이 값의 근거
+        if str(keep[f]) == str(drop[f]):
+            con.execute(f"UPDATE field_evidence SET applied=0 WHERE field=? AND id IN ({','.join('?' * len(drop_ev)) or 'NULL'})",
+                        (f, *drop_ev))
+            continue
+        if f == "founded_date":
+            con.execute("UPDATE companies SET founded_date=NULL WHERE id=?", (keep_id,))
+            con.execute("UPDATE field_evidence SET applied=0 WHERE company_id=? AND field='founded_date'", (keep_id,))
+            con.execute("UPDATE companies SET notes=coalesce(notes||' / ','')||? WHERE id=?",
+                        (f"[설립일 충돌] 병합 전 {keep[f]} / {drop[f]} — 국민연금·국세청 대조로 정함", keep_id))
+            out["founded_conflict"] = (keep[f], drop[f])
+        else:
+            con.execute(f"UPDATE field_evidence SET applied=0 WHERE field=? AND id IN ({','.join('?' * len(drop_ev)) or 'NULL'})",
+                        (f, *drop_ev))
+            out["kept"].append(f)
+    # 태그 다시 판정 대상으로 (manual 근거는 건드리지 않음)
+    for kind in ("payer", "task", "customer", "task_group"):
+        if con.execute("SELECT 1 FROM tag_evidence WHERE company_id=? AND kind=? AND applied=1 AND source='manual'",
+                       (keep_id, kind)).fetchone():
+            continue
+        con.execute("UPDATE tag_evidence SET applied=0 WHERE company_id=? AND kind=?", (keep_id, kind))
+        con.execute("DELETE FROM company_tags WHERE company_id=? AND kind=?", (keep_id, kind))
+    return out
 
 
 # ───────────── 근거 기반 값 채택 ─────────────
