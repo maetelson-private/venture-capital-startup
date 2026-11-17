@@ -35,7 +35,7 @@ def collect(con) -> list[dict]:
     for r in rows:
         cid = r["id"]
         tags = con.execute("SELECT kind, value FROM company_tags WHERE company_id=?", (cid,)).fetchall()
-        kws, programs, ptc = [], [], {"payer": [], "task": [], "customer": [], "task_group": []}
+        kws, programs, ptc = [], [], {"payer": [], "task": [], "customer": [], "task_group": [], "customer_type": []}
         for t in tags:
             if t["kind"] in ptc:
                 ptc[t["kind"]].append(t["value"])
@@ -74,6 +74,7 @@ def collect(con) -> list[dict]:
             "tgroup": (ptc["task_group"] or ["미분류"])[0],
             "user": next((v for v in ptc["customer"] if v not in unknown), ""),
             "pre": bool(r["is_pre_startup"]),
+            "ctype": ptc["customer_type"],  # 고객 유형 (예: 치과) — 과제 묶음과 별개로 거름
             "unverified": age_unverified,
             "signals": signals,
             "investors": [x for x in (r["investor_names"] or "").split(",") if x][:4],
@@ -83,7 +84,9 @@ def collect(con) -> list[dict]:
             "conf": r["confidence"] or "",
             # 밸류 미상은 거의 전부라 표시하지 않고, 업력을 알 수 없을 때만 경고 (예비창업팀은 업력 판단 대상 아님)
             "check": age_unverified,
-            "reason": ("업력 미확인 — 설립일 없음 (국민연금 대조로도 못 찾음)" if r["age_years"] is None
+            # 경고가 붙는 카드에만 문구를 둔다 (예전엔 과거 설립일 카드에도 '미래' 문구가 데이터에 들어갔음)
+            "reason": ("" if not age_unverified
+                       else "업력 미확인 — 설립일 없음 (국민연금 대조로도 못 찾음)" if r["age_years"] is None
                        else f"설립일 {r['founded_date']} 이 미래 — 예정일로 보임, 확인 필요"),
             # 서비스 정보가 전혀 없는 곳(빈 KBIC 프로필 등)은 기본으로 숨김
             "thin": not (r["one_liner"] or r["service_summary"] or r["bm_summary"] or reg),
@@ -132,6 +135,7 @@ main{max-width:1240px;margin:0 auto;padding:16px;display:grid;grid-template-colu
 <select id="payer"><option value="">지불자 전체</option></select>
 <select id="pbasis"><option value="">근거+추정</option><option value="근거">근거만</option><option value="추정">추정만</option></select>
 <select id="tgroup"><option value="">과제 묶음 전체</option></select>
+<select id="ctype"><option value="">고객 유형 전체</option></select>
 <select id="sort"><option value="new">최근 설립순</option><option value="sig">신호 많은 순</option><option value="name">이름순</option></select>
 </div><div class="kwbar" id="kwbar"></div></div>
 <main id="grid"></main>
@@ -167,14 +171,15 @@ function render(){ const q = $('#q').value.trim().toLowerCase();
   let xs = DATA.filter(d => ($('#thin').checked || !d.thin) && (!$('#first').checked || !d.rounds) && ($('#unver').checked || !d.unverified)
     && (!activeKw || d.kws.includes(activeKw))
     && payOk(d) && (!$('#tgroup').value || d.tgroup === $('#tgroup').value)
+    && (!$('#ctype').value || d.ctype.includes($('#ctype').value))
     && (!q || [d.name, d.one, d.task, d.user, d.payer.map(p=>p.v).join(' '), d.kws.join(' '), d.signals.map(s=>s.t).join(' ')].join(' ').toLowerCase().includes(q)));
   const s = $('#sort').value;
   xs.sort(s === 'name' ? (a,b)=>a.name.localeCompare(b.name,'ko') : s === 'sig' ? (a,b)=>b.signals.length-a.signals.length
        : (a,b)=>(b.founded||'0').localeCompare(a.founded||'0'));
   $('#count').textContent = `${xs.length} / ${DATA.length}곳`;
   $('#grid').innerHTML = xs.length ? xs.map(card).join('') : '<div class="empty">조건에 맞는 회사가 없어요</div>'; }
-['q','first','unver','thin','sort','payer','pbasis','tgroup'].forEach(id => $('#'+id).addEventListener('input', render));
-fillSel('payer', DATA.flatMap(d => d.payer.map(p => p.v))); fillSel('tgroup', DATA.map(d => d.tgroup));
+['q','first','unver','thin','sort','payer','pbasis','tgroup','ctype'].forEach(id => $('#'+id).addEventListener('input', render));
+fillSel('payer', DATA.flatMap(d => d.payer.map(p => p.v))); fillSel('ctype', DATA.flatMap(d => d.ctype)); fillSel('tgroup', DATA.map(d => d.tgroup));
 kwBar(); render();
 </script></body></html>"""
 
