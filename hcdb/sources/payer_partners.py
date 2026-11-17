@@ -1,8 +1,8 @@
 """보험사·기업 협업 프로그램 명단 → DB 에 이미 있는 기업에만 지불자 근거를 붙인다 (새 기업은 만들지 않음).
 
-- 삼성금융 C-Lab Outside 2026 본선 기사 (smarttoday): 삼성생명·삼성화재가 고른 기업 → 실손·민간보험, basis 근거, 신뢰도 하.
-  같은 기사에 "본선 진출 17개사는 각각 3천만원의 솔루션 개발비를 지원받고 … 5개월간 협업" 이 있어 보험사가 돈을 낸다.
-  다만 제품 구매가 아니라 협업 개발비라 신뢰도는 하. 삼성카드·삼성증권 선정사는 지불자 목록에 맞는 칸이 없어 붙이지 않는다.
+- 삼성금융 C-Lab Outside 2026 본선 기사 (smarttoday): 삼성생명·삼성화재가 고른 기업 → 실손·민간보험, basis 추정, 신뢰도 하.
+  같은 기사에 "본선 진출 17개사는 각각 3천만원의 솔루션 개발비를 지원받고 … 5개월간 협업" 이 있지만, 제품 구매가 아니라
+  협업 개발비 지원이라 지불자 근거로 보지 않는다 (2026-11-17 사용자 결정). 삼성카드·삼성증권 선정사는 지불자 목록에 맞는 칸이 없어 붙이지 않는다.
 - KB스타터스 포트폴리오 (KB Innovation HUB 공개 JSON): 지불 문장이 없으므로 basis 추정, 신뢰도 하.
   의료·건강 관련 소개인 곳만, "KB금융 보험 계열사와 협업 대상" 이라는 이유로 실손·민간보험을 추정한다.
 - 이미 붙은 지불자 값은 지우지 않고 더한다. 상태가 '근거 없음'뿐이면 그 표시를 이 값으로 바꾼다. manual 은 건드리지 않는다.
@@ -32,7 +32,7 @@ def clab(con) -> list[dict]:
         if not aff:
             continue
         for m in re.finditer(r"▲([^▲(]+)\(", line):
-            out.append({"name": m.group(1).strip(), "payer": "실손·민간보험", "basis": "근거", "confidence": "하",
+            out.append({"name": m.group(1).strip(), "payer": "실손·민간보험", "basis": "추정", "confidence": "하",
                         "quote": f"{aff}은 ▲{m.group(1).strip()}"[:120] if f"{aff}은 ▲{m.group(1).strip()}" in line
                         else line[max(0, m.start() - 40): m.end() + 40][:120],
                         "url": CLAB_URL, "note": "program:clab",
