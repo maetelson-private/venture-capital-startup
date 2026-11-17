@@ -610,6 +610,13 @@ def cli(con, a) -> None:
         print(t)
         print(f"→ {p}")
         return
+    if a.step == "rules":
+        from .payer_rules import apply, summary
+        t = summary(apply(con, a.dry_run))
+        p = save_report(t, "payer_rules_dryrun.md" if a.dry_run else "payer_rules_apply.md")
+        print(t)
+        print(f"→ {p}" + (" (dry-run)" if a.dry_run else ""))
+        return
     if a.step == "partners":
         from .payer_partners import run as partners_run
         partners_run(con, a.dry_run)
