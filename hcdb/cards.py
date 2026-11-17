@@ -47,6 +47,18 @@ def collect(con) -> list[dict]:
                           (cid,)).fetchall()
         signals = [{"t": f"{g['kind']}" + (f" {g['n']}건" if g["n"] > 1 else ""), "k": "reg"} for g in reg]
         signals += [{"t": p, "k": "prog"} for p in programs[:3]]
+        # 지불자: 태그 근거(tag_evidence)로 상태를 나눈다 — 미처리 / 근거 없음 / 값(근거·추정)
+        pev = con.execute("""SELECT value, basis FROM tag_evidence WHERE company_id=? AND kind='payer' AND applied=1""",
+                          (cid,)).fetchall()
+        if not pev:
+            payers = [{"v": "미처리", "b": "none"}]
+        elif all(p["value"] in ("근거 없음", "미상") for p in pev):
+            payers = [{"v": "근거 없음", "b": "none"}]
+        else:
+            payers = [{"v": p["value"], "b": "추정" if p["basis"] == "추정" else "근거"}
+                      for p in pev if p["value"] not in ("근거 없음", "미상")]
+        unknown = ("근거 없음", "미상")
+        age_unverified = not r["is_pre_startup"] and (r["age_years"] is None or r["age_years"] < 0)
         out.append({
             "id": cid,
             "name": _display(r["name"]),
@@ -56,20 +68,22 @@ def collect(con) -> list[dict]:
             "sido": (r["sido"] or "").replace("특별시", "").replace("광역시", "").replace("특별자치도", "").replace("도", "")[:4],
             "one": r["one_liner"] or _first_sentence(r["service_summary"]) or _first_sentence(r["bm_summary"]),
             "kws": kws[:5],
-            # 지불자·과제·사용자 (tags 명령). 없으면 미상
-            "payer": ptc["payer"] or ["미상"],
-            "task": (ptc["task"] or [""])[0] if (ptc["task"] or [""])[0] != "미상" else "",
-            "tgroup": (ptc["task_group"] or ["미상"])[0],
-            "user": (ptc["customer"] or [""])[0] if (ptc["customer"] or [""])[0] != "미상" else "",
+            # 지불자·과제·사용자 (tags 명령)
+            "payer": payers,
+            "task": next((v for v in ptc["task"] if v not in unknown), ""),
+            "tgroup": (ptc["task_group"] or ["미분류"])[0],
+            "user": next((v for v in ptc["customer"] if v not in unknown), ""),
+            "pre": bool(r["is_pre_startup"]),
+            "unverified": age_unverified,
             "signals": signals,
             "investors": [x for x in (r["investor_names"] or "").split(",") if x][:4],
             "rounds": r["n_rounds"] or 0,
             "url": r["url"] or "",
             "ceo": r["ceo"] or "",
             "conf": r["confidence"] or "",
-            # 밸류 미상은 거의 전부라 표시하지 않고, 업력을 알 수 없을 때만 경고
-            "check": r["age_years"] is None or r["age_years"] < 0,
-            "reason": ("설립일 미상 — 업력 확인 필요" if r["age_years"] is None
+            # 밸류 미상은 거의 전부라 표시하지 않고, 업력을 알 수 없을 때만 경고 (예비창업팀은 업력 판단 대상 아님)
+            "check": age_unverified,
+            "reason": ("업력 미확인 — 설립일 없음 (국민연금 대조로도 못 찾음)" if r["age_years"] is None
                        else f"설립일 {r['founded_date']} 이 미래 — 예정일로 보임, 확인 필요"),
             # 서비스 정보가 전혀 없는 곳(빈 KBIC 프로필 등)은 기본으로 숨김
             "thin": not (r["one_liner"] or r["service_summary"] or r["bm_summary"] or reg),
@@ -104,17 +118,19 @@ main{max-width:1240px;margin:0 auto;padding:16px;display:grid;grid-template-colu
 .sig{font-size:11px;border-radius:6px;padding:2px 7px}.sig.reg{background:var(--reg-soft);color:var(--reg)}.sig.prog{background:var(--chip);color:var(--sub)}
 .ptc{font-size:12px;color:var(--sub);display:flex;flex-direction:column;gap:2px}.ptc b{color:var(--ink);font-weight:600}
 .pay{font-size:11px;border-radius:6px;padding:2px 7px;background:var(--accent-soft);color:var(--accent)}.pay.unk{background:var(--chip);color:var(--sub)}
+.pay.est{background:transparent;border:1px dashed var(--accent);color:var(--accent)}
 .warn{font-size:11px;color:var(--warn);background:var(--warn-soft);border-radius:6px;padding:2px 7px;align-self:flex-start}
 .foot{margin-top:auto;font-size:12px;color:var(--sub)}.empty{grid-column:1/-1;text-align:center;color:var(--sub);padding:40px}
 </style></head><body>
 <header><h1>디지털 헬스케어 롱리스트</h1>
-<div class="meta">하드필터 통과 + 범위 포함 · <span id="count"></span> · 생성 __DATE__</div></header>
+<div class="meta">하드필터 통과 + 범위 포함 · <span id="count"></span> · 생성 __DATE__ · 업력 미확인(설립일 없음)은 기본으로 숨김 · 점선 칩 = 지불자 추정</div></header>
 <div class="bar"><div class="controls">
 <input type="search" id="q" placeholder="회사명·설명·키워드 검색">
 <label class="tg"><input type="checkbox" id="first" checked> 첫 투자 후보만 (투자 이력 없음)</label>
-<label class="tg"><input type="checkbox" id="dated"> 설립일 확인된 곳만</label>
+<label class="tg"><input type="checkbox" id="unver"> 업력 미확인도 보기</label>
 <label class="tg"><input type="checkbox" id="thin"> 정보 부족한 곳도 보기</label>
 <select id="payer"><option value="">지불자 전체</option></select>
+<select id="pbasis"><option value="">근거+추정</option><option value="근거">근거만</option><option value="추정">추정만</option></select>
 <select id="tgroup"><option value="">과제 묶음 전체</option></select>
 <select id="sort"><option value="new">최근 설립순</option><option value="sig">신호 많은 순</option><option value="name">이름순</option></select>
 </div><div class="kwbar" id="kwbar"></div></div>
@@ -138,23 +154,27 @@ function card(d){ const facts = [d.founded ? `${d.founded} 설립` : '설립일 
   return `<article class="card"><div class="top"><div class="name">${name}</div>${badge}</div>
   <div class="facts">${esc(facts)}</div><div class="one">${esc(d.one || '공개된 서비스 정보 없음')}</div>
   ${d.kws.length ? `<div class="chips">${d.kws.map(k=>`<span class="chip">#${esc(k)}</span>`).join('')}</div>` : ''}
-  <div class="chips">${d.payer.map(p=>`<span class="pay${p==='미상'?' unk':''}">${p==='미상'?'지불자 미상':'💳 '+esc(p)}</span>`).join('')}</div>
-  ${d.task || d.user ? `<div class="ptc">${d.task ? `<span>과제 <b>${esc(d.task)}</b>${d.tgroup!=='미상' ? ' · '+esc(d.tgroup) : ''}</span>` : ''}${d.user ? `<span>사용자 <b>${esc(d.user)}</b></span>` : ''}</div>` : ''}
+  <div class="chips">${d.payer.map(p=>p.b==='none' ? `<span class="pay unk">지불자 ${esc(p.v)}</span>`
+     : `<span class="pay${p.b==='추정'?' est':''}" title="${p.b}">💳 ${esc(p.v)}${p.b==='추정'?' (추정)':''}</span>`).join('')}</div>
+  ${d.task || d.user ? `<div class="ptc">${d.task ? `<span>과제 <b>${esc(d.task)}</b>${d.tgroup!=='미분류' ? ' · '+esc(d.tgroup) : ''}</span>` : ''}${d.user ? `<span>사용자 <b>${esc(d.user)}</b></span>` : ''}</div>` : ''}
   ${d.signals.length ? `<div class="chips">${d.signals.map(s=>`<span class="sig ${s.k}">${esc(s.t)}</span>`).join('')}</div>` : ''}
   ${d.check ? `<span class="warn">${esc(d.reason)}</span>` : ''}
   <div class="foot">${d.investors.length ? '투자: ' + esc(d.investors.join(', ')) : ''}</div></article>`; }
+function payOk(d){ const v = $('#payer').value, b = $('#pbasis').value;
+  if (!v && !b) return true;
+  return d.payer.some(p => (!v || p.v === v) && (!b || p.b === b)); }
 function render(){ const q = $('#q').value.trim().toLowerCase();
-  let xs = DATA.filter(d => ($('#thin').checked || !d.thin) && (!$('#first').checked || !d.rounds) && (!$('#dated').checked || d.founded)
+  let xs = DATA.filter(d => ($('#thin').checked || !d.thin) && (!$('#first').checked || !d.rounds) && ($('#unver').checked || !d.unverified)
     && (!activeKw || d.kws.includes(activeKw))
-    && (!$('#payer').value || d.payer.includes($('#payer').value)) && (!$('#tgroup').value || d.tgroup === $('#tgroup').value)
-    && (!q || [d.name, d.one, d.task, d.user, d.payer.join(' '), d.kws.join(' '), d.signals.map(s=>s.t).join(' ')].join(' ').toLowerCase().includes(q)));
+    && payOk(d) && (!$('#tgroup').value || d.tgroup === $('#tgroup').value)
+    && (!q || [d.name, d.one, d.task, d.user, d.payer.map(p=>p.v).join(' '), d.kws.join(' '), d.signals.map(s=>s.t).join(' ')].join(' ').toLowerCase().includes(q)));
   const s = $('#sort').value;
   xs.sort(s === 'name' ? (a,b)=>a.name.localeCompare(b.name,'ko') : s === 'sig' ? (a,b)=>b.signals.length-a.signals.length
        : (a,b)=>(b.founded||'0').localeCompare(a.founded||'0'));
   $('#count').textContent = `${xs.length} / ${DATA.length}곳`;
   $('#grid').innerHTML = xs.length ? xs.map(card).join('') : '<div class="empty">조건에 맞는 회사가 없어요</div>'; }
-['q','first','dated','thin','sort','payer','tgroup'].forEach(id => $('#'+id).addEventListener('input', render));
-fillSel('payer', DATA.flatMap(d => d.payer)); fillSel('tgroup', DATA.map(d => d.tgroup));
+['q','first','unver','thin','sort','payer','pbasis','tgroup'].forEach(id => $('#'+id).addEventListener('input', render));
+fillSel('payer', DATA.flatMap(d => d.payer.map(p => p.v))); fillSel('tgroup', DATA.map(d => d.tgroup));
 kwBar(); render();
 </script></body></html>"""
 
