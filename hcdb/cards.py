@@ -47,7 +47,7 @@ def collect(con) -> list[dict]:
                           (cid,)).fetchall()
         signals = [{"t": f"{g['kind']}" + (f" {g['n']}건" if g["n"] > 1 else ""), "k": "reg"} for g in reg]
         signals += [{"t": p, "k": "prog"} for p in programs[:3]]
-        # 지불자: 태그 근거(tag_evidence)로 상태를 나눈다 — 미처리 / 근거 없음 / 값(근거·추정)
+        # 지불자: 태그 근거(tag_evidence)로 상태를 나눈다 — 미처리 / 근거 없음 / 값(근거·추정(사용자 유형)·기본값(과제 묶음))
         pev = con.execute("""SELECT value, basis FROM tag_evidence WHERE company_id=? AND kind='payer' AND applied=1""",
                           (cid,)).fetchall()
         if not pev:
@@ -55,7 +55,7 @@ def collect(con) -> list[dict]:
         elif all(p["value"] in ("근거 없음", "미상") for p in pev):
             payers = [{"v": "근거 없음", "b": "none"}]
         else:
-            payers = [{"v": p["value"], "b": "추정" if p["basis"] == "추정" else "근거"}
+            payers = [{"v": p["value"], "b": p["basis"] if p["basis"] in ("추정", "기본값") else "근거"}
                       for p in pev if p["value"] not in ("근거 없음", "미상")]
         unknown = ("근거 없음", "미상")
         age_unverified = not r["is_pre_startup"] and (r["age_years"] is None or r["age_years"] < 0)
@@ -122,18 +122,19 @@ main{max-width:1240px;margin:0 auto;padding:16px;display:grid;grid-template-colu
 .ptc{font-size:12px;color:var(--sub);display:flex;flex-direction:column;gap:2px}.ptc b{color:var(--ink);font-weight:600}
 .pay{font-size:11px;border-radius:6px;padding:2px 7px;background:var(--accent-soft);color:var(--accent)}.pay.unk{background:var(--chip);color:var(--sub)}
 .pay.est{background:transparent;border:1px dashed var(--accent);color:var(--accent)}
+.pay.def{background:transparent;border:1px dotted var(--sub);color:var(--sub)}
 .warn{font-size:11px;color:var(--warn);background:var(--warn-soft);border-radius:6px;padding:2px 7px;align-self:flex-start}
 .foot{margin-top:auto;font-size:12px;color:var(--sub)}.empty{grid-column:1/-1;text-align:center;color:var(--sub);padding:40px}
 </style></head><body>
 <header><h1>디지털 헬스케어 롱리스트</h1>
-<div class="meta">하드필터 통과 + 범위 포함 · <span id="count"></span> · 생성 __DATE__ · 업력 미확인(설립일 없음)은 기본으로 숨김 · 점선 칩 = 지불자 추정</div></header>
+<div class="meta">하드필터 통과 + 범위 포함 · <span id="count"></span> · 생성 __DATE__ · 업력 미확인(설립일 없음)은 기본으로 숨김 · 💳 칩: 실선 = 근거, 점선 = 추정(사용자 유형), 회색 점 = 기본값(과제 묶음)</div></header>
 <div class="bar"><div class="controls">
 <input type="search" id="q" placeholder="회사명·설명·키워드 검색">
 <label class="tg"><input type="checkbox" id="first" checked> 첫 투자 후보만 (투자 이력 없음)</label>
 <label class="tg"><input type="checkbox" id="unver"> 업력 미확인도 보기</label>
 <label class="tg"><input type="checkbox" id="thin"> 정보 부족한 곳도 보기</label>
 <select id="payer"><option value="">지불자 전체</option></select>
-<select id="pbasis"><option value="">근거+추정</option><option value="근거">근거만</option><option value="추정">추정만</option></select>
+<select id="pbasis"><option value="">지불자 단계 전체</option><option value="근거+추정">근거+추정 (기본값 제외)</option><option value="근거">근거만</option><option value="추정">추정(사용자 유형)만</option><option value="기본값">기본값(과제 묶음)만</option></select>
 <select id="tgroup"><option value="">과제 묶음 전체</option></select>
 <select id="ctype"><option value="">고객 유형 전체</option></select>
 <select id="sort"><option value="new">최근 설립순</option><option value="sig">신호 많은 순</option><option value="name">이름순</option></select>
@@ -159,14 +160,15 @@ function card(d){ const facts = [d.founded ? `${d.founded} 설립` : '설립일 
   <div class="facts">${esc(facts)}</div><div class="one">${esc(d.one || '공개된 서비스 정보 없음')}</div>
   ${d.kws.length ? `<div class="chips">${d.kws.map(k=>`<span class="chip">#${esc(k)}</span>`).join('')}</div>` : ''}
   <div class="chips">${d.payer.map(p=>p.b==='none' ? `<span class="pay unk">지불자 ${esc(p.v)}</span>`
-     : `<span class="pay${p.b==='추정'?' est':''}" title="${p.b}">💳 ${esc(p.v)}${p.b==='추정'?' (추정)':''}</span>`).join('')}</div>
+     : `<span class="pay${p.b==='추정'?' est':p.b==='기본값'?' def':''}" title="${PB[p.b]}">💳 ${esc(p.v)}${p.b==='근거'?'':' ('+PB[p.b]+')'}</span>`).join('')}</div>
   ${d.task || d.user ? `<div class="ptc">${d.task ? `<span>과제 <b>${esc(d.task)}</b>${d.tgroup!=='미분류' ? ' · '+esc(d.tgroup) : ''}</span>` : ''}${d.user ? `<span>사용자 <b>${esc(d.user)}</b></span>` : ''}</div>` : ''}
   ${d.signals.length ? `<div class="chips">${d.signals.map(s=>`<span class="sig ${s.k}">${esc(s.t)}</span>`).join('')}</div>` : ''}
   ${d.check ? `<span class="warn">${esc(d.reason)}</span>` : ''}
   <div class="foot">${d.investors.length ? '투자: ' + esc(d.investors.join(', ')) : ''}</div></article>`; }
+const PB = {'근거':'근거', '추정':'추정·사용자 유형', '기본값':'기본값·과제 묶음'};
 function payOk(d){ const v = $('#payer').value, b = $('#pbasis').value;
   if (!v && !b) return true;
-  return d.payer.some(p => (!v || p.v === v) && (!b || p.b === b)); }
+  return d.payer.some(p => (!v || p.v === v) && (!b || (b === '근거+추정' ? p.b === '근거' || p.b === '추정' : p.b === b))); }
 function render(){ const q = $('#q').value.trim().toLowerCase();
   let xs = DATA.filter(d => ($('#thin').checked || !d.thin) && (!$('#first').checked || !d.rounds) && ($('#unver').checked || !d.unverified)
     && (!activeKw || d.kws.includes(activeKw))

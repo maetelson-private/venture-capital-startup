@@ -86,6 +86,8 @@ def _apply(con, dry_run, items, tasks, data) -> dict:
 
 
 UNK = (UNKNOWN, "미상")
+TIERS = ("근거", "추정", "기본값")
+TIER_LABEL = {"근거": "근거", "추정": "추정(사용자 유형)", "기본값": "기본값(과제 묶음)"}
 
 
 def _companies(con) -> dict:
@@ -102,7 +104,7 @@ def _companies(con) -> dict:
                 if e["value"] in UNK:
                     d["pnote"] = e["note"]
                 else:
-                    d["payer"].append((e["value"], "추정" if e["basis"] == "추정" else "근거", e["confidence"]))
+                    d["payer"].append((e["value"], e["basis"] if e["basis"] in TIERS[1:] else "근거", e["confidence"]))
             elif e["kind"] in ("task", "customer"):
                 k = e["kind"]
                 if e["value"] in UNK:
@@ -111,9 +113,9 @@ def _companies(con) -> dict:
                     d[k] = (e["value"], e["confidence"])
             elif e["kind"] == "task_group":
                 d["group"] = e["value"]
-        d["pstate"] = ("값 있음(근거)" if any(b == "근거" for _, b, _ in d["payer"]) else
-                       "값 있음(추정만)" if d["payer"] else
-                       "근거 없음" if d["pnote"] else "미처리")
+        tiers = {b for _, b, _ in d["payer"]}
+        d["tier"] = next((t for t in TIERS if t in tiers), None)
+        d["pstate"] = (TIER_LABEL[d["tier"]] if d["tier"] else "근거 없음" if d["pnote"] else "미처리")
         out[r["id"]] = d
     return out
 
@@ -123,28 +125,32 @@ def _groups():
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
 
 
-def _xtab(cos, ids, basis, gnames, payers):
-    """기업 수 교차표. basis='근거'|'추정'|None(둘 다). 지불자 2개면 두 행에 모두 셈."""
+def _gname(d):
+    return d["group"] or ("과제 근거 없음" if d["tnote"] or not d["task"] else "미분류")
+
+
+def _xtab(cos, ids, tiers):
+    """기업 수 교차표. tiers 에 든 basis 의 값만 센다. 지불자 2개면 두 행에 모두 셈."""
     cell = Counter()
     for i in ids:
         d = cos[i]
-        g = d["group"] or ("과제 근거 없음" if d["tnote"] or not d["task"] else "미분류")
-        vals = [v for v, b, _ in d["payer"] if basis is None or b == basis]
-        if not vals and basis is None:
-            vals = [UNKNOWN if d["pnote"] else "미처리"]
-        for v in set(vals):
-            cell[(v, g)] += 1
+        for v in {v for v, b, _ in d["payer"] if b in tiers}:
+            cell[(v, _gname(d))] += 1
     return cell
 
 
-def _table(cell, rows, cols, title):
+def _table(cell, rows, cols, title, extra=None):
+    """extra: {행이름: Counter(묶음→수)} — 합계 행에서 빼는 별도 표기 행."""
     L = [f"### {title}", "", "| 지불자 / 과제 묶음 | " + " | ".join(cols) + " | 합계 |", "|" + "---|" * (len(cols) + 2)]
     for p in rows:
         vals = [cell.get((p, g), 0) for g in cols]
         if not any(vals):
             continue
         L.append(f"| **{p}** | " + " | ".join(str(v) if v else "·" for v in vals) + f" | {sum(vals)} |")
-    L.append("| **합계** | " + " | ".join(str(sum(cell.get((p, g), 0) for p in rows)) for g in cols) + " | |")
+    L.append("| **합계** | " + " | ".join(str(sum(cell.get((p, g), 0) for p in rows)) for g in cols) +
+             f" | {sum(cell.get((p, g), 0) for p in rows for g in cols)} |")
+    for name, c in (extra or {}).items():
+        L.append(f"| _{name}_ | " + " | ".join(str(c.get(g, 0)) if c.get(g) else "·" for g in cols) + f" | _{sum(c.values())}_ |")
     return L
 
 
@@ -158,44 +164,57 @@ def report(con) -> str:
     L = ["# payer × 과제 묶음 교차표", "",
          f"대상: 하드필터 통과 + 범위 포함 {len(allids)}곳, 그중 투자 이력 없는 곳 {len(first)}곳. "
          "지불자가 2개인 기업은 두 행에 모두 들어가서 행 합이 기업 수보다 클 수 있음. "
-         "'미분류' = 과제는 있으나 21개 묶음 어디에도 넣지 않음, '과제 근거 없음' = 과제를 정하지 못함.", ""]
+         f"'미분류' = 과제는 있으나 {len(groups)}개 묶음 어디에도 넣지 않음, '과제 근거 없음' = 과제를 정하지 못함.", "",
+         "지불자 근거 단계 (2026-11-17 규칙표):",
+         "- **근거**: 원문 문장 + URL 이 있는 값, 사용자 결정(manual) 값",
+         "- **추정(사용자 유형)**: 사용자가 돈을 쓰는 조직(병의원·치과·약국·요양기관·연구조직·공공·기업)이라 그 조직을 지불자로 봄. "
+         "사용자 결정으로 근거에서 내린 추정 2건(메디아크 실손, 핀스케어 기업 복지)도 여기 포함",
+         "- **기본값(과제 묶음)**: 사용자로는 못 정하고, 과제가 구매자를 정하는 9개 묶음(판독·기록·병원 운영·시술·술기 교육·응급입원·"
+         "신약·약국·요양기관)이라 붙인 값. **합계·밀집 칸 계산에 넣지 않고 따로 표기**",
+         "- 한 기업은 가장 높은 단계로 셈 (근거 > 추정 > 기본값)", ""]
 
     # 1. 상태
-    L += ["## 1. 상태", "", "| 항목 | 값 있음(근거) | 값 있음(추정만) | 근거 없음 | 미처리 | 투자 없는 곳 중 값 있음 |", "|---|---|---|---|---|---|"]
+    cols = [TIER_LABEL[t] for t in TIERS] + ["근거 없음", "미처리"]
+    L += ["## 1. 상태 (기업 단위, 가장 높은 단계)", "", "| 항목 | " + " | ".join(cols) + " | 투자 없는 곳 중 근거+추정 |",
+          "|" + "---|" * (len(cols) + 2)]
     st = Counter(cos[i]["pstate"] for i in allids)
-    stf = Counter(cos[i]["pstate"] for i in first)
-    L.append(f"| 지불자 | {st['값 있음(근거)']} | {st['값 있음(추정만)']} | {st['근거 없음']} | {st['미처리']} | "
-             f"{stf['값 있음(근거)'] + stf['값 있음(추정만)']} / {len(first)} |")
+    stf = sum(1 for i in first if cos[i]["tier"] in ("근거", "추정"))
+    L.append("| 지불자 | " + " | ".join(str(st[c]) for c in cols) + f" | {stf} / {len(first)} |")
     for k, nk in (("task", "tnote"), ("customer", "cnote")):
         has = sum(1 for i in allids if cos[i][k]); none = sum(1 for i in allids if not cos[i][k] and cos[i][nk])
-        L.append(f"| {k} | {has} | – | {none} | {len(allids) - has - none} | {sum(1 for i in first if cos[i][k])} / {len(first)} |")
+        L.append(f"| {k} | {has} | – | – | {none} | {len(allids) - has - none} | {sum(1 for i in first if cos[i][k])} / {len(first)} |")
     notes = Counter(cos[i]["pnote"] for i in allids if cos[i]["pstate"] == "근거 없음")
     L += ["", "지불자 '근거 없음'의 사유: " + ", ".join(f"{k} {v}" for k, v in notes.most_common()) +
-          " (no_source = 원천 없음, homepage_failed = 홈페이지 수집 실패, no_evidence = 원천은 있으나 근거·추정 불가)"]
+          " (no_source = 원천 없음, homepage_failed = 홈페이지 수집 실패, no_evidence = 원천은 있으나 근거·추정 불가, "
+          "rule_none = 규칙표로 정할 수 없어 이전 추정을 내림)"]
 
     # 2. 신뢰도
     L += ["", "## 2. 신뢰도 분포 (값 단위)", "", "| 항목 | 상 | 중 | 하 |", "|---|---|---|---|"]
-    cp = Counter(c for i in allids for _, b, c in cos[i]["payer"] if b == "근거")
-    L.append(f"| 지불자(근거) | {cp['상']} | {cp['중']} | {cp['하']} |")
-    L.append(f"| 지불자(추정) | 0 | 0 | {sum(1 for i in allids for _, b, _ in cos[i]['payer'] if b == '추정')} |")
+    for t in TIERS:
+        c = Counter(cf for i in allids for _, b, cf in cos[i]["payer"] if b == t)
+        L.append(f"| 지불자 {TIER_LABEL[t]} | {c['상']} | {c['중']} | {c['하'] + c[None]} |")
     for k in ("task", "customer"):
         c = Counter(cos[i][k][1] for i in allids if cos[i][k])
         L.append(f"| {k} | {c['상']} | {c['중']} | {c['하']} |")
 
     # 3. 교차표 (투자 이력 없는 곳)
     L += ["", "## 3. 투자 이력 없는 곳: 지불자 × 과제 묶음", ""]
-    for basis, title in (("근거", "근거만"), ("추정", "추정만"), (None, "근거+추정 (지불자 없는 곳은 '근거 없음'·'미처리' 행)")):
-        cell = _xtab(cos, first, basis, gnames, payers)
-        rows = payers + ([UNKNOWN, "미처리"] if basis is None else [])
-        L += _table(cell, rows, gnames, title) + [""]
+    for tiers, title in ((("근거",), "근거만"), (("추정",), "추정(사용자 유형)만"), (("기본값",), "기본값(과제 묶음)만")):
+        L += _table(_xtab(cos, first, tiers), payers, gnames, title) + [""]
+    only_def = Counter(_gname(cos[i]) for i in first if cos[i]["tier"] == "기본값")
+    none = Counter(_gname(cos[i]) for i in first if cos[i]["tier"] is None)
+    L += _table(_xtab(cos, first, ("근거", "추정")), payers, gnames,
+                "근거+추정 (합계는 이 두 단계만. 아래 기울임 행은 합계 밖)",
+                {"기본값만 있는 곳": only_def, "근거 없음·미처리": none}) + [""]
 
-    # 4. 밀집·빈 칸 (근거+추정, 지불자 확인된 칸만)
-    cell = _xtab(cos, first, None, gnames, payers)
+    # 4. 밀집·빈 칸 (근거+추정만)
+    cell = _xtab(cos, first, ("근거", "추정"))
+    dcell = _xtab(cos, first, ("기본값",))
     real_g = [g["name"] for g in groups]
     dense = sorted(((p, g, cell[(p, g)]) for p in payers for g in real_g if cell.get((p, g), 0) >= 5), key=lambda x: -x[2])
     sparse = [(p, g, cell.get((p, g), 0)) for p in payers for g in real_g if cell.get((p, g), 0) <= 1]
-    L += ["## 4. 기업이 5곳 이상 몰린 칸 (투자 이력 없음, 근거+추정)", ""]
-    L += [f"- {p} × {g}: {n}곳" for p, g, n in dense] or ["- 없음"]
+    L += ["## 4. 기업이 5곳 이상 몰린 칸 (투자 이력 없음, 근거+추정. 괄호는 같은 칸의 기본값 수)", ""]
+    L += [f"- {p} × {g}: {n}곳" + (f" (+기본값 {dcell[(p, g)]})" if dcell.get((p, g)) else "") for p, g, n in dense] or ["- 없음"]
     L += ["", f"## 5. 0~1곳인 칸 (투자 이력 없음, 근거+추정) — {len(sparse)}칸 / {len(payers) * len(real_g)}칸", ""]
     by_p = defaultdict(list)
     for p, g, n in sparse:
