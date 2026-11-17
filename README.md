@@ -98,7 +98,7 @@ v_companies  업력·누적투자금·첫 투자일·팁스·특허 수 등 계�
 | 업계 언론 과거 기사 | `feeds --archive --pages 60 --since 2023-11-01` | 헬스케어 태그 피드까지 과거 페이지를 훑음 | ANTHROPIC_API_KEY |
 | **빈칸 보강 (Claude 웹 검색)** | `enrich [--limit N]` | 설립일이 빈 기업의 설립일·대표·홈페이지·시도 (출처 URL 기록, 신뢰도 중) | ANTHROPIC_API_KEY |
 | 식약처 혁신의료기기 지정 현황 API | `mfds` | 혁신의료기기 지정 | DATA_GO_KR_KEY + 이 API 활용신청 |
-| 뉴스 검색 (네이버 API, 없으면 구글뉴스 RSS 제목) | `news`, `article URL…` | 위와 같음. 키가 없으면 규칙 기반(신뢰도 하) | NAVER_* (선택) |
+| 뉴스 검색 (네이버 API. 구글뉴스 RSS 는 robots.txt 가 막고 있어 지금은 결과 없음) | `news`, `article URL…` | 위와 같음. 키가 없으면 규칙 기반(신뢰도 하) | NAVER_* (선택) |
 | 국세청 사업자 상태조회 | `nts` | 영업 상태·사업자등록 여부 | DATA_GO_KR_KEY |
 | OpenDART | `dart` | 사업자번호·설립일·대표·홈페이지·결산 | DART_KEY |
 | KIPRIS Plus | `kipris` | 특허 출원·등록·PCT | KIPRIS_KEY |
@@ -147,7 +147,7 @@ python -m hcdb boards                # 실제 처리
 - 넣지 않은 곳: 연세대기술지주(robots.txt 가 Claude 계열 봇을 이름으로 차단), 연세 바이오헬스(robots 해석이 갈림), 한국과학기술지주(Firestore 직접 조회 필요), KAIST 청년창업투자지주(406 차단), 경북대(도메인이 다른 사이트로 바뀜), 성균관대·인하대(공개 목록 없음).
 
 ### 크롤링 매너 (config.py)
-robots.txt 준수, 같은 호스트에 2초 간격, 같은 URL 은 30일 캐시. 구글뉴스 기사 링크는 robots 로 막혀 있어 제목·요약만 저장한다.
+robots.txt 준수, 같은 호스트에 2초 간격, 같은 URL 은 30일 캐시. 구글뉴스는 RSS 검색(`/rss`)도 robots 로 막혀 있어(2026-11 확인) 쓰지 않는다. 키 없는 대체 경로가 아니라 robots 가 허용할 때만 동작하는 경로다.
 
 ## 다음에 붙이면 좋은 것
 - **게시판 추가**: `hcdb/sources/boards.py` 의 `BOARDS` 에 한 줄 추가하면 된다. 교육부(학생창업유망팀)는 게시글을 JS 함수로 열어 직접 URL 을 못 만들고, K-Startup 은 자동 접속을 끊어서 아직 빠져 있다. 과기정통부는 검색이 안 돼 최근 N페이지만 본다.

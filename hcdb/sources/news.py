@@ -1,4 +1,4 @@
-"""뉴스: 검색(네이버 API → 없으면 구글뉴스 RSS)으로 기사 발견 → 본문 수집 → 규칙 기반 추출.
+"""뉴스: 검색(네이버 API → 없으면 구글뉴스 RSS, 단 robots.txt 가 허용할 때만)으로 기사 발견 → 본문 수집 → 규칙 기반 추출.
 
 규칙 추출은 신뢰도 '하'로 넣는다. 사람이 엑셀에서 확인 후 manual 로 다시 넣으면 그 값이 우선.
 """
@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 
 from .. import config, db
-from ..fetch import fetch_doc, http_get
+from ..fetch import Blocked, fetch_doc, http_get
 from ..normalize import norm_name, parse_krw
 
 DEFAULT_QUERIES = [
@@ -37,10 +37,23 @@ def search_naver(query: str, display=50, start=1, sort="date") -> list[dict]:
     return out
 
 
+_google_blocked_noted = False
+
+
 def search_google_rss(query: str) -> list[dict]:
-    """키 없이 쓰는 대안. 링크가 구글 리다이렉트라 본문 수집은 실패할 수 있어 제목·요약 위주."""
-    r = http_get("https://news.google.com/rss/search",
-                 params={"q": query, "hl": "ko", "gl": "KR", "ceid": "KR:ko"}, check_robots=False)
+    """키 없이 쓰는 대안. 다른 수집처럼 robots.txt 를 지킨다.
+    news.google.com robots.txt 는 /rss 를 허용하지 않아(2026-11 확인) 지금은 빈 목록을 돌려준다.
+    robots 가 바뀌어 허용되면 코드 수정 없이 다시 쓰인다. 링크가 구글 리다이렉트라 제목·요약 위주."""
+    global _google_blocked_noted
+    try:
+        r = http_get("https://news.google.com/rss/search",
+                     params={"q": query, "hl": "ko", "gl": "KR", "ceid": "KR:ko"})
+    except Blocked:
+        if not _google_blocked_noted:
+            print("  ! 구글뉴스 RSS 는 robots.txt 가 막고 있어 쓰지 않아요. "
+                  "뉴스 검색은 .env 의 NAVER_CLIENT_ID/SECRET 이 있어야 돼요.")
+            _google_blocked_noted = True
+        return []
     out = []
     for it in ET.fromstring(r.content).iter("item"):
         desc = html.unescape(re.sub(r"<[^>]+>", " ", it.findtext("description") or ""))

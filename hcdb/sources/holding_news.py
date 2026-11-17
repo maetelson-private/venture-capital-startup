@@ -67,7 +67,7 @@ def collect(holdings: list[str] | None = None, set_name: str = "holding") -> Non
             search_naver("기술지주", display=1)
             naver = True
         except Exception as e:  # noqa: BLE001
-            print(f"네이버 검색 실패 → 구글뉴스 RSS 사용 ({str(e)[:60]})")
+            print(f"네이버 검색 실패 → 구글뉴스 RSS 시도 (robots.txt 가 막으면 결과 없음) ({str(e)[:60]})")
     fname, plain = SETS[set_name]
     path = config.DATA_DIR / fname
     # 이전에 모은 기사는 유지하고, 새로 나온 것만 'new': true 로 표시 (추출은 새 것만 하면 된다)
