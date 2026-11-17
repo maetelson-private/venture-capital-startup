@@ -26,6 +26,8 @@ _MIGRATIONS = [
     ("patents", "applicants", "TEXT"),
     ("companies", "one_liner", "TEXT"),
     ("company_aliases", "alias_variant", "TEXT"),   # normalize.variant_key — 표기 차이 매칭 보조
+    ("tag_evidence", "basis", "TEXT"),              # 근거 / 추정 (지불자)
+    ("tag_evidence", "reason", "TEXT"),             # 추정 이유 한 줄
 ]
 
 

@@ -99,7 +99,7 @@ def main(argv=None):
     s.add_argument("--redo", action="store_true", help="수기(manual) 판정 외에는 다시 판정")
 
     s = sp.add_parser("tags", help="지불자·과제·사용자 태그 (원문·홈페이지 근거만, ANTHROPIC_API_KEY)")
-    s.add_argument("step", choices=["run", "dump", "load", "nosource", "migrate", "group", "report"])
+    s.add_argument("step", choices=["run", "dump", "load", "nosource", "migrate", "group", "report", "partners"])
     s.add_argument("file", nargs="?", help="load/migrate: 세션 판정 답 JSON")
     s.add_argument("--with-b2b", action="store_true", help="dump: 기존 B2B 이관용 기사도 함께")
     s.add_argument("--limit", type=int)

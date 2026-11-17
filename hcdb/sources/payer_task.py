@@ -1,12 +1,16 @@
-"""지불자(payer) × 과제(task) × 사용자(customer) 태그 — 근거 문장이 있을 때만 채운다.
+"""지불자(payer) × 과제(task) × 사용자(customer) 태그.
 
-근거 원천은 두 가지뿐:
+원천 (새로 검색하지 않음):
   1) raw_documents 수집 원문 — 기업에 연결된 문서 전체 + 연결 안 된 문서 중 사명이 나오는 부분
   2) 기업 홈페이지 — fetch.fetch_doc 그대로(robots·호스트 2초 간격·30일 캐시), 첫 화면 + 회사소개·서비스 하위 3쪽
-한 줄 소개(service_summary 등)는 근거로 쓰지 않는다.
+  3) DB 의 한 줄 소개·서비스 요약 (field_evidence 에 남은 출처 URL 을 함께 씀)
 
-Claude 가 돌려준 근거 문장은 원문에 실제로 있는지(공백 무시 부분일치) 확인하고, 없으면 버린다 → '미상'.
-결과는 company_tags(kind=payer/task/customer)에, 근거는 tag_evidence 에 쌓는다.
+상태는 셋: 미처리(태그 없음) / '근거 없음' / 값 있음.
+지불자는 두 단계:
+  근거 — 원문에 지불 주체가 드러난 문장. 문장과 URL 필수, 원문과 대조해 없으면 버린다.
+  추정 — 그런 문장은 없지만 과제·고객·제품 형태에서 유도. 이유 한 줄, 신뢰도 '하' 고정.
+과제·사용자는 근거 문장이 있어야 한다.
+결과는 company_tags(kind=payer/task/customer)에, 근거는 tag_evidence(basis·reason 포함)에 쌓는다.
 manual 근거가 반영된 kind 는 건드리지 않는다.
 """
 import json
@@ -17,9 +21,10 @@ from urllib.parse import urlparse
 
 from .. import config, db, fetch, llm
 
+UNKNOWN = "근거 없음"          # 판정했지만 값을 못 정한 상태 (미처리는 태그 자체가 없음)
+_UNKNOWN_IN = {UNKNOWN, "미상", ""}  # 답에서 '모름'으로 받아들이는 값
 PAYERS = ["건보 급여", "비급여 본인부담", "실손·민간보험", "장기요양보험", "병의원 예산", "기업 복지",
-          "제약·기기사", "공공·지자체", "소비자 직접", "미상"]
-UNKNOWN = "미상"
+          "제약·기기사", "공공·지자체", "소비자 직접", UNKNOWN]
 KINDS = ("payer", "task", "customer")
 SOURCE = "payer-llm"
 
@@ -150,15 +155,23 @@ def gather(con, corpus: Corpus, cid: int, name: str, url: str | None, fetch_home
         for d in homepage_docs(con, cid, u, dry_run):
             if d.get("body") and len(d["body"]) > 40:
                 sources.append({**d, "body": d["body"][:DOC_CHARS], "kind": "homepage"})
+    # DB 의 한 줄 소개·서비스 요약 (짧으니 맨 앞에). URL 은 그 칸의 근거 출처, 없으면 내부 출처 표시
+    intro = con.execute("""SELECT field, value, source, source_url FROM field_evidence
+                           WHERE company_id=? AND applied=1 AND field IN ('one_liner','service_summary','bm_summary')
+                           ORDER BY field""", (cid,)).fetchall()
+    if intro:
+        body = "\n".join(dict.fromkeys(r["value"] for r in intro if r["value"]))
+        url = next((r["source_url"] for r in intro if r["source_url"]), None) or f"hcdb:{intro[0]['source']}"
+        sources.insert(0, {"id": None, "url": url, "title": "DB 소개·요약", "body": body, "kind": "intro"})
     # 같은 URL 중복 제거 + 전체 길이 제한
     seen, out, total = set(), [], 0
     for s in sources:
-        if s["url"] in seen:
+        if (s["url"], s["kind"]) in seen:
             continue
-        seen.add(s["url"])
+        seen.add((s["url"], s["kind"]))
         if total + len(s["body"]) > TOTAL_CHARS:
             s = {**s, "body": s["body"][:max(0, TOTAL_CHARS - total)]}
-        if len(s["body"]) < 40:
+        if len(s["body"]) < (8 if s["kind"] == "intro" else 40):
             continue
         out.append(s)
         total += len(s["body"])
@@ -178,8 +191,13 @@ payer (1~2개): 아래 목록에서만 고른다.
 - 공공·지자체: 정부·지자체·보건소·공공기관이 사업비로 산다 (R&D 과제비·정부 지원금은 지불자가 아니다)
 - 소비자 직접: 개인이 앱 구독·제품 구매로 직접 낸다
 - 실손·민간보험, 장기요양보험: 그 보험이 비용을 낸다고 적혀 있을 때
-- 판단 근거 문장이 원문에 없으면 반드시 "{UNKNOWN}". 서비스 설명만 보고 '병원용이니 병원이 내겠지' 식으로 짐작하지 않는다.
-  판매·도입·공급·계약·구독·수가·납품·구매처럼 돈의 흐름을 말하는 문장이 있어야 한다.
+- payer 마다 basis 를 단다.
+  basis "근거": 판매·도입·공급·계약·구독·수가·납품·구매처럼 돈의 흐름(지불 주체)을 말하는 문장이 원문에 있을 때.
+    quote·source 필수, reason 은 빈 문자열.
+  basis "추정": 그런 문장은 없지만 과제·사용자·제품 형태로 지불자를 유도할 수 있을 때.
+    reason 에 유도 이유를 한 줄(예: "병원 간호 업무용 SW 라 병원이 도입 비용을 낸다고 봄"), quote·source 는 빈 문자열,
+    confidence 는 반드시 "하". 원문에서 무엇을 하는지조차 알 수 없으면 추정도 하지 않는다.
+- 근거도 추정도 안 되면 payer 는 [{{"value": "{UNKNOWN}"}}].
 
 task (1개): 누구의 어떤 문제를 푸는지 한 구절(25자 안팎). 수단(AI, 앱, 플랫폼, 기기, 웨어러블, 데이터 분석 등)을 넣지 않는다.
   나쁜 예: "AI 영상 분석", "디지털 치료제 플랫폼"  좋은 예: "응급실 뇌출혈 판독 지연", "소아 ADHD 치료 지속률 저하"
@@ -192,10 +210,11 @@ customer (1개): 돈 내는 쪽이 아니라 실제로 쓰는 사람·조직 (�
 - source 는 그 문장이 있는 원문 번호 (예: "S2").
 - 원문에 여러 회사가 나오면 대상 회사에 관한 문장만 쓴다. 투자사·협력사·다른 회사 이야기는 근거가 아니다.
 - confidence: 상 = 문장이 그 값을 직접 말함 / 중 = 돈의 흐름·사용 장면이 분명히 드러나지만 표현이 간접적 / 하 = 약한 단서.
-- "{UNKNOWN}" 이면 quote·source 는 빈 문자열, confidence 도 빈 문자열."""
+- "{UNKNOWN}" 이면 quote·source 는 빈 문자열, confidence 도 빈 문자열.
+- (intro) 원문은 DB 에 저장된 소개·요약이다. 과제·사용자 근거로 쓸 수 있고, 지불 주체가 적혀 있으면 payer 근거도 된다."""
 
 SKELETON = json.dumps({
-    "payer": [{"value": "", "quote": "", "source": "", "confidence": ""}],
+    "payer": [{"value": "", "basis": "근거|추정", "quote": "", "source": "", "reason": "", "confidence": ""}],
     "task": {"value": "", "quote": "", "source": "", "confidence": ""},
     "customer": {"value": "", "quote": "", "source": "", "confidence": ""},
 }, ensure_ascii=False)
@@ -243,14 +262,21 @@ def _quote_ok(quote: str, body: str) -> bool:
     return all(_squash(p) in b for p in parts)
 
 
-def _check(item: dict | None, sources: list[dict], allowed: set | None = None) -> dict:
-    """한 값 검증 → {value, quote, url, confidence, note}"""
-    unk = {"value": UNKNOWN, "quote": "", "url": None, "confidence": None, "note": "no_evidence"}
+def _check(item: dict | None, sources: list[dict], allowed: set | None = None, allow_estimate=False) -> dict:
+    """한 값 검증 → {value, quote, url, confidence, note, basis, reason}"""
+    unk = {"value": UNKNOWN, "quote": "", "url": None, "confidence": None, "note": "no_evidence",
+           "basis": None, "reason": None}
     if not item:
         return unk
     v = (item.get("value") or "").strip()
-    if not v or v == UNKNOWN or (allowed is not None and v not in allowed):
+    if v in _UNKNOWN_IN or (allowed is not None and v not in allowed):
         return unk
+    if allow_estimate and (item.get("basis") or "").strip() == "추정":
+        reason = (item.get("reason") or "").strip()
+        if len(reason) < 6:
+            return {**unk, "note": "estimate_no_reason"}
+        return {"value": v, "quote": "", "url": None, "confidence": "하", "note": "estimate",
+                "basis": "추정", "reason": reason[:200]}
     m = re.search(r"\d+", item.get("source") or "")
     if not m or not (1 <= int(m.group()) <= len(sources)):
         return {**unk, "note": "bad_source"}
@@ -259,22 +285,27 @@ def _check(item: dict | None, sources: list[dict], allowed: set | None = None) -
     if not _quote_ok(q, src["body"]):
         return {**unk, "note": "quote_not_found"}
     conf = item.get("confidence") if item.get("confidence") in ("상", "중", "하") else "하"
-    return {"value": v, "quote": q, "url": src["url"], "confidence": conf, "note": src["kind"]}
+    return {"value": v, "quote": q, "url": src["url"], "confidence": conf, "note": src["kind"],
+            "basis": "근거", "reason": None}
 
 
 def judge(name: str, sources: list[dict], only_payer: set | None = None, raw: dict | None = None) -> dict:
     """{payer:[…], task:{…}, customer:{…}} — 검증을 통과한 값만, 나머지는 미상.
     raw 를 주면 API 를 부르지 않고 그 답(세션에서 판정한 JSON)을 같은 규칙으로 검증한다."""
     if not sources:
-        u = {"value": UNKNOWN, "quote": "", "url": None, "confidence": None, "note": "no_source"}
+        u = {"value": UNKNOWN, "quote": "", "url": None, "confidence": None, "note": "no_source",
+             "basis": None, "reason": None}
         return {"payer": [u], "task": u, "customer": u}
     if raw is None:
         raw = _ask(name, sources, only_payer) or {}
     allowed = (only_payer or set(PAYERS)) - {UNKNOWN}
-    payers = [_check(p, sources, allowed) for p in (raw.get("payer") or [])[:2]]
-    payers = [p for p in payers if p["value"] != UNKNOWN] or [
-        payers[0] if payers else {"value": UNKNOWN, "quote": "", "url": None, "confidence": None, "note": "no_evidence"}]
-    dedup = {p["value"]: p for p in payers}
+    payers = [_check(p, sources, allowed, allow_estimate=not only_payer) for p in (raw.get("payer") or [])[:2]]
+    known = sorted((p for p in payers if p["value"] != UNKNOWN), key=lambda p: p["basis"] != "근거")
+    payers = known or [payers[0] if payers else {"value": UNKNOWN, "quote": "", "url": None, "confidence": None,
+                                                 "note": "no_evidence", "basis": None, "reason": None}]
+    dedup = {}
+    for p in payers:  # 같은 값이 근거·추정으로 둘 다 오면 근거 쪽
+        dedup.setdefault(p["value"], p)
     return {"payer": list(dedup.values()), "task": _check(raw.get("task"), sources),
             "customer": _check(raw.get("customer"), sources)}
 
@@ -301,9 +332,11 @@ def write(con, cid: int, res: dict, source=SOURCE) -> None:
         con.execute("DELETE FROM company_tags WHERE company_id=? AND kind=?", (cid, kind))
         con.execute("UPDATE tag_evidence SET applied=0 WHERE company_id=? AND kind=?", (cid, kind))
         for v in vals:
-            con.execute("""INSERT INTO tag_evidence(company_id, kind, value, quote, source, source_url, confidence, note, applied)
-                           VALUES (?,?,?,?,?,?,?,?,1)""",
-                        (cid, kind, v["value"], v["quote"] or None, source, v["url"], v["confidence"], v["note"]))
+            con.execute("""INSERT INTO tag_evidence(company_id, kind, value, quote, source, source_url, confidence, note,
+                                                    basis, reason, applied)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,1)""",
+                        (cid, kind, v["value"], v["quote"] or None, source, v["url"], v["confidence"], v["note"],
+                         v.get("basis"), v.get("reason")))
             db.add_tag(con, cid, kind, v["value"], v["url"])
 
 
@@ -314,11 +347,13 @@ def targets(con, ids: list[int] | None = None, redo=False) -> list[dict]:
         where = f"c.id IN ({','.join(str(int(i)) for i in ids)})"
     elif not redo:
         where += f" AND c.id NOT IN (SELECT company_id FROM tag_evidence WHERE kind='payer' AND source='{SOURCE}')"
+    # 순서: 투자 이력 없는 미처리 → 투자 이력 없는 나머지 → 투자 이력 있는 곳
     rows = con.execute(f"""SELECT c.id, c.name, c.url,
               (SELECT count(*) FROM funding_rounds r WHERE r.company_id=c.id) AS n_rounds,
-              (SELECT count(*) FROM doc_company_links l WHERE l.company_id=c.id) AS n_docs
+              (SELECT count(*) FROM doc_company_links l WHERE l.company_id=c.id) AS n_docs,
+              EXISTS (SELECT 1 FROM tag_evidence e WHERE e.company_id=c.id AND e.kind='payer' AND e.applied=1) AS done
             FROM companies c WHERE {where}
-            ORDER BY (n_rounds > 0), (c.url IS NULL OR c.url=''), n_docs DESC, c.id""").fetchall()
+            ORDER BY (n_rounds > 0), done, (c.url IS NULL OR c.url=''), n_docs DESC, c.id""").fetchall()
     return [dict(r) for r in rows]
 
 
@@ -421,6 +456,20 @@ def migrate(con, dry_run=False, answers: dict | None = None) -> list[dict]:
 
 
 # ───────────── API 없이: 원문 내보내기 → 세션에서 판정 → 넣기 ─────────────
+def _prior(con, cid: int) -> dict:
+    """지난 판정에서 검증을 통과한 값(참고용). 이번 원문 번호와 대조해 다시 검증된다."""
+    out = {}
+    for r in con.execute("""SELECT kind, value, quote, source_url, confidence FROM tag_evidence
+                            WHERE company_id=? AND applied=1 AND kind IN ('payer','task','customer')
+                              AND value NOT IN ('미상', ?) AND quote IS NOT NULL""", (cid, UNKNOWN)):
+        v = {"value": r["value"], "quote": r["quote"], "url": r["source_url"], "confidence": r["confidence"]}
+        if r["kind"] == "payer":
+            out.setdefault("payer", []).append(v)
+        else:
+            out[r["kind"]] = v
+    return out
+
+
 def dump(con, path: Path, limit=None, ids=None, redo=False, only_sourced=False, fetch_home=True,
          with_b2b=False) -> int:
     """판정할 원문을 JSON 으로. 키: 기업 ID 문자열 / 'b2b|기업ID|기사URL'(이관용)."""
@@ -437,7 +486,10 @@ def dump(con, path: Path, limit=None, ids=None, redo=False, only_sourced=False, 
         out["items"][str(r["id"])] = {
             "name": r["name"], "n_rounds": r["n_rounds"], "mode": "full",
             "sources": [{"S": f"S{i}", **{k: s.get(k) for k in ("kind", "url", "title", "body")}}
-                        for i, s in enumerate(srcs, 1)]}
+                        for i, s in enumerate(srcs, 1)],
+            "prior": _prior(con, r["id"])}
+        if n % 50 == 0:
+            print(f"  원문 모음 {n}곳", flush=True)
     if with_b2b:
         for r in _legacy_rows(con):
             if r["value"] == "B2B":
@@ -455,30 +507,48 @@ def load(con, dump_path: Path, answers_path: Path, dry_run=False) -> list[dict]:
     """세션에서 쓴 답 {키: {payer, task, customer}} 를 API 판정과 똑같이 검증(근거 문장 원문 대조)해서 넣는다."""
     d = json.loads(dump_path.read_text(encoding="utf-8"))["items"]
     ans = json.loads(answers_path.read_text(encoding="utf-8"))
-    results = []
+    results, failed = [], []
     for key, it in d.items():
-        if it["mode"] != "full" or key not in ans:
+        if it["mode"] != "full":
             continue
-        srcs = it["sources"]
-        res = judge(it["name"], srcs, raw=ans[key])
-        r = con.execute("SELECT id, name, url, (SELECT count(*) FROM funding_rounds f WHERE f.company_id=c.id) n_rounds "
-                        "FROM companies c WHERE id=?", (int(key),)).fetchone()
-        results.append({"company": dict(r), "n_sources": len(srcs),
-                        "source_kinds": sorted({s["kind"] for s in srcs}), **res})
+        if key not in ans:
+            failed.append({"id": key, "name": it["name"], "reason": "판정 답 없음"})
+            continue
+        try:
+            res = judge(it["name"], it["sources"], raw=ans[key])
+            r = con.execute("SELECT id, name, url, (SELECT count(*) FROM funding_rounds f WHERE f.company_id=c.id) "
+                            "n_rounds FROM companies c WHERE id=?", (int(key),)).fetchone()
+            if r is None:
+                failed.append({"id": key, "name": it["name"], "reason": "기업이 DB 에 없음(병합·삭제)"})
+                continue
+        except Exception as e:  # noqa: BLE001 — 한 곳 실패해도 계속
+            failed.append({"id": key, "name": it["name"], "reason": f"검증 오류: {e}"})
+            continue
+        results.append({"company": dict(r), "n_sources": len(it["sources"]),
+                        "source_kinds": sorted({s["kind"] for s in it["sources"]}), **res})
     if not dry_run:
         with db.run_log(con, SOURCE + "-session", f"n={len(results)}") as st:
-            for x in results:
-                write(con, x["company"]["id"], x)
-                st["docs"] += 1
+            for i, x in enumerate(results, 1):
+                try:
+                    write(con, x["company"]["id"], x)
+                    st["docs"] += 1
+                except Exception as e:  # noqa: BLE001
+                    failed.append({"id": x["company"]["id"], "name": x["company"]["name"], "reason": f"저장 오류: {e}"})
+                if i % 50 == 0:
+                    con.commit()
+                    print(f"  저장 {i}/{len(results)}곳", flush=True)
             con.commit()
+    (config.DATA_DIR / "payer_task_failed.json").write_text(json.dumps(failed, ensure_ascii=False, indent=1),
+                                                             encoding="utf-8")
+    print(f"판정 반영 {len(results)}곳, 실패 {len(failed)}곳 → data/payer_task_failed.json")
     return results
 
 
-def fill_no_source(con, dry_run=False) -> int:
-    """근거 원천(연결 원문·사명 언급·홈페이지 URL)이 하나도 없는 곳은 판정 없이 미상(no_source)."""
+def fill_no_source(con, dry_run=False, redo=False) -> int:
+    """원천(연결 원문·사명 언급·홈페이지·DB 소개)이 하나도 없는 곳은 판정 없이 '근거 없음'(no_source)."""
     corpus = Corpus(con)
     n = 0
-    for r in targets(con):
+    for r in targets(con, redo=redo):
         # 홈페이지는 캐시(30일)에서 다시 읽음. 글자가 거의 없는 JS 페이지도 원천 없음으로 친다
         if gather(con, corpus, r["id"], r["name"], r["url"], fetch_home=True, dry_run=True):
             continue  # 쓸 만한 원문이 있는데 아직 판정 전 → dump/load 대상
@@ -491,7 +561,7 @@ def fill_no_source(con, dry_run=False) -> int:
             write(con, r["id"], res)
     if not dry_run:
         con.commit()
-    print(f"원천 없음 → 미상 {n}곳" + (" (dry-run)" if dry_run else ""))
+    print(f"원천 없음 → 근거 없음 {n}곳" + (" (dry-run)" if dry_run else ""))
     return n
 
 
@@ -536,8 +606,12 @@ def cli(con, a) -> None:
         print(t)
         print(f"→ {p}")
         return
+    if a.step == "partners":
+        from .payer_partners import run as partners_run
+        partners_run(con, a.dry_run)
+        return
     if a.step == "nosource":
-        fill_no_source(con, a.dry_run)
+        fill_no_source(con, a.dry_run, a.redo)
         return
     if a.step == "migrate":
         answers = json.loads(Path(a.file).read_text(encoding="utf-8")) if a.file else None

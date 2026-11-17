@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS tag_evidence (
     source_url   TEXT,
     confidence   TEXT CHECK (confidence IN ('상','중','하') OR confidence IS NULL),
     note         TEXT,
+    basis        TEXT,                            -- 근거(문장·URL 있음) / 추정(유도 이유, 신뢰도 하)
+    reason       TEXT,                            -- 추정 이유 한 줄
     collected_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     applied      INTEGER NOT NULL DEFAULT 0
 );
