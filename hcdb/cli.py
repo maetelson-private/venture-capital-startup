@@ -2,7 +2,7 @@
 import argparse
 
 from . import cards, db, dupes, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters, payer_task
+from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters, payer_task, founding
 
 
 def main(argv=None):
@@ -119,6 +119,9 @@ def main(argv=None):
     s.add_argument("-o", "--out")
     s.add_argument("--template", action="store_true", help="빈 입력 양식만")
 
+    s = sp.add_parser("founding", help="설립일 보정: 미래 설립일 정리 + 국민연금 적용일자 근사 + 병합 충돌 정리")
+    s.add_argument("--dry-run", action="store_true")
+
     sp.add_parser("dupes", help="이름 중복 후보 목록 (data/dupe_candidates.md). 병합은 하지 않음")
 
     s = sp.add_parser("merge", help="중복 기업 병합")
@@ -211,6 +214,8 @@ def main(argv=None):
             filters.run(con)
         case "export":
             export.run(con, a.out, a.template)
+        case "founding":
+            founding.run(con, a.dry_run)
         case "dupes":
             dupes.run(con)
         case "merge":

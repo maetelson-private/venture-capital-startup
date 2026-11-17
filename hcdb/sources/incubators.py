@@ -266,11 +266,16 @@ def run_bi(con, recent_years: int = 6) -> None:
             name = re.sub(r"\(주\)|㈜|주식회사|\(유\)", "", x["기업명"]).strip()
             if not name:
                 continue
-            y = {"name": name, "ceo": x.get("대표자명"), "founded_date": norm_date(x.get("창업일")),
+            # 예비창업자는 창업일 칸에 예정일(예: 2026-12-31)이 들어 있다 → 설립일이 아니라 창업 예정 시점으로
+            pre = x.get("기업형태") == "예비창업자" or name.startswith("예비창업")
+            when = norm_date(x.get("창업일"))
+            future = bool(when and when > date.today().isoformat())
+            y = {"name": name, "ceo": x.get("대표자명"), "founded_date": None if (pre or future) else when,
                  "service_summary": x.get("주생산품")}
             cid = _save(con, "inc:bi", BI_SRC, y, "상", f"{x.get('센터명')} 입주")
-            if x.get("기업형태") == "예비창업자":
-                con.execute("UPDATE companies SET is_pre_startup=1 WHERE id=?", (cid,))
+            if pre or future:
+                db.set_fields(con, cid, {"is_pre_startup": 1, "expected_founding": (when or "")[:7]},
+                              "inc:bi", BI_SRC, "중")
             db.set_field(con, cid, "sido", x.get("소재지"), "inc:bi", BI_SRC, "중")
             st["facts"] += 1
         con.commit()
