@@ -29,6 +29,55 @@ def _first_sentence(s: str | None, n: int = 70) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+# 출처 표시: field_evidence.source → 카드에 보일 이름. 판정·보강용(사람·Claude 판단, 규칙)은 '출처'가 아니라서 뺀다
+_NOT_SOURCE = {"claude-session", "rule", "llm-scope", "manual", "web-llm", "nts", "nps", "od:nps-founding",
+               "kst-browser", "gist-browser", "snubh-browser", "enrich-web", "naver-news"}
+SOURCE_LABELS = {
+    "tips": "TIPS", "kbic": "KBIC", "dart": "DART", "dart-holdings": "기술지주 감사보고서(DART)",
+    "news-llm": "언론 기사", "holding-news": "언론 기사", "briefing": "정책브리핑 보도자료",
+    "notice:innov": "혁신의료기기 보도자료", "notice:sandbox": "규제샌드박스 보도자료", "notice:program": "선정 공고",
+    "mfds-sw": "식약처 SW 의료기기 허가", "mfds-mnft": "식약처 제조업 허가", "mfds-innov": "식약처 혁신의료기기",
+    "od:venture": "벤처기업명단", "od:nps": "국민연금 사업장", "od:cert": "창업기업확인서", "od:gmp": "의료기기 GMP",
+    "od:techdev": "중기부 R&D 과제", "od:labco": "연구소기업", "od:kmedi": "대구경북첨복단지", "od:aiv": "AI바우처 공급기업",
+    "od:15032487": "성남시 벤처기업", "od:15085792": "대구 의료R&D지구", "od:15149071": "경북 바이오헬스기업",
+    "inc:bi": "창업보육센터 입주기업", "inc:dhnet": "디지털헬스산업협회", "inc:trials": "SW 의료기기 임상시험 승인",
+    "inc:rdh": "연구중심병원 창업", "inc:yonsei": "연세대 창업지원단", "inc:snubh": "분당서울대병원 창업보육",
+    "portfolio:dhp": "DHP 포트폴리오", "portfolio:dcamp": "D.CAMP", "portfolio:d2sf": "네이버 D2SF",
+    "portfolio:futureplay": "퓨처플레이", "portfolio:lotte": "롯데벤처스", "portfolio:springcamp": "스프링캠프",
+    "portfolio:mashup": "매쉬업벤처스", "portfolio:kakao": "카카오벤처스", "portfolio:iaccel": "인포뱅크 아이엑셀",
+    "portfolio:clab": "삼성 C-Lab", "portfolio:kiac": "한국투자AC", "portfolio:etri": "ETRI홀딩스",
+    "portfolio:theventures": "더벤처스", "portfolio:ccvc": "쿨리지코너", "portfolio:signite": "시그나이트",
+    "portfolio:kingo": "킹고스프링", "cl:hyu": "한양대 스타트업", "cl:gbia": "김해의생명산업진흥원",
+    "cl:kustartup": "고려대 KU Startup", "cl:kmedi_web": "K-MEDI hub", "cl:khu": "경희대 창업보육센터",
+    "cl:gjtp": "광주TP", "cl:ewha": "이화여대 창업지원단", "cl:jbf": "전남바이오진흥원", "cl:knu": "경북대 창업지원단",
+    "cl:gwtp": "강원TP", "cl:erica": "한양대 ERICA 창업보육",
+}
+
+
+def _source_label(code: str) -> str | None:
+    if code in _NOT_SOURCE:
+        return None
+    if code in SOURCE_LABELS:
+        return SOURCE_LABELS[code]
+    if code.startswith("univ:"):  # 'univ:서울대기술지주 포트폴리오' 처럼 라벨이 코드에 들어 있음
+        return code.split(":", 1)[1]
+    return code
+
+
+def _sources(con, cid: int) -> list[dict]:
+    """처음 발견한 순서대로 [{t: 이름, u: 링크(있으면)}]. 같은 이름은 한 번만."""
+    rows = con.execute("""SELECT source, min(id) first,
+                                 max(CASE WHEN source_url LIKE 'http%' THEN source_url END) url
+                          FROM field_evidence WHERE company_id=? GROUP BY source ORDER BY first""", (cid,)).fetchall()
+    out, seen = [], set()
+    for r in rows:
+        lab = _source_label(r["source"])
+        if lab and lab not in seen:
+            seen.add(lab)
+            out.append({"t": lab, "u": r["url"] or ""})
+    return out
+
+
 def collect(con) -> list[dict]:
     out = []
     rows = con.execute("""SELECT * FROM v_companies WHERE hard_filter='통과' AND scope='포함'""").fetchall()
@@ -77,6 +126,7 @@ def collect(con) -> list[dict]:
             "ctype": ptc["customer_type"],  # 고객 유형 (예: 치과) — 과제 묶음과 별개로 거름
             "unverified": age_unverified,
             "signals": signals,
+            "src": _sources(con, cid),
             "investors": [x for x in (r["investor_names"] or "").split(",") if x][:4],
             "rounds": r["n_rounds"] or 0,
             "url": r["url"] or "",
@@ -124,7 +174,8 @@ main{max-width:1240px;margin:0 auto;padding:16px;display:grid;grid-template-colu
 .pay.est{background:transparent;border:1px dashed var(--accent);color:var(--accent)}
 .pay.def{background:transparent;border:1px dotted var(--sub);color:var(--sub)}
 .warn{font-size:11px;color:var(--warn);background:var(--warn-soft);border-radius:6px;padding:2px 7px;align-self:flex-start}
-.foot{margin-top:auto;font-size:12px;color:var(--sub)}.empty{grid-column:1/-1;text-align:center;color:var(--sub);padding:40px}
+.foot{margin-top:auto;font-size:12px;color:var(--sub)}
+.src{font-size:11px;color:var(--sub);border-top:1px dashed var(--line);padding-top:6px}.src a{color:var(--sub)}.src a:hover{color:var(--ink)}.empty{grid-column:1/-1;text-align:center;color:var(--sub);padding:40px}
 </style></head><body>
 <header><h1>디지털 헬스케어 롱리스트</h1>
 <div class="meta">하드필터 통과 + 범위 포함 · <span id="count"></span> · 생성 __DATE__ · 업력 미확인(설립일 없음)은 기본으로 숨김 · 💳 칩: 실선 = 근거, 점선 = 추정(사용자 유형), 회색 점 = 기본값(과제 묶음)</div></header>
@@ -164,7 +215,8 @@ function card(d){ const facts = [d.founded ? `${d.founded} 설립` : '설립일 
   ${d.task || d.user ? `<div class="ptc">${d.task ? `<span>과제 <b>${esc(d.task)}</b>${d.tgroup!=='미분류' ? ' · '+esc(d.tgroup) : ''}</span>` : ''}${d.user ? `<span>사용자 <b>${esc(d.user)}</b></span>` : ''}</div>` : ''}
   ${d.signals.length ? `<div class="chips">${d.signals.map(s=>`<span class="sig ${s.k}">${esc(s.t)}</span>`).join('')}</div>` : ''}
   ${d.check ? `<span class="warn">${esc(d.reason)}</span>` : ''}
-  <div class="foot">${d.investors.length ? '투자: ' + esc(d.investors.join(', ')) : ''}</div></article>`; }
+  <div class="foot">${d.investors.length ? '투자: ' + esc(d.investors.join(', ')) : ''}</div>
+  ${d.src.length ? `<div class="src">출처: ${d.src.map(x => x.u ? `<a href="${esc(x.u)}" target="_blank" rel="noopener">${esc(x.t)}</a>` : esc(x.t)).join(' · ')}</div>` : ''}</article>`; }
 const PB = {'근거':'근거', '추정':'추정·사용자 유형', '기본값':'기본값·과제 묶음'};
 function payOk(d){ const v = $('#payer').value, b = $('#pbasis').value;
   if (!v && !b) return true;
@@ -174,7 +226,7 @@ function render(){ const q = $('#q').value.trim().toLowerCase();
     && (!activeKw || d.kws.includes(activeKw))
     && payOk(d) && (!$('#tgroup').value || d.tgroup === $('#tgroup').value)
     && (!$('#ctype').value || d.ctype.includes($('#ctype').value))
-    && (!q || [d.name, d.one, d.task, d.user, d.payer.map(p=>p.v).join(' '), d.kws.join(' '), d.signals.map(s=>s.t).join(' ')].join(' ').toLowerCase().includes(q)));
+    && (!q || [d.name, d.one, d.task, d.user, d.payer.map(p=>p.v).join(' '), d.kws.join(' '), d.signals.map(s=>s.t).join(' '), d.src.map(x=>x.t).join(' ')].join(' ').toLowerCase().includes(q)));
   const s = $('#sort').value;
   xs.sort(s === 'name' ? (a,b)=>a.name.localeCompare(b.name,'ko') : s === 'sig' ? (a,b)=>b.signals.length-a.signals.length
        : (a,b)=>(b.founded||'0').localeCompare(a.founded||'0'));
