@@ -112,7 +112,7 @@ def main(argv=None):
 
     s = sp.add_parser("cards", help="롱리스트 카드 HTML (data/longlist.html)")
     s.add_argument("-o", "--out")
-    s.add_argument("--public", action="store_true", help="외부 공개용: 대표자 이름 제외, 검색 색인 막음 (data/public/longlist.html)")
+    s.add_argument("--public", action="store_true", help="외부 공개용: 대표자 이름 제외, 검색 색인 막음 (site/index.html → GitHub Pages)")
 
     sp.add_parser("filter", help="하드 필터 재판정")
 

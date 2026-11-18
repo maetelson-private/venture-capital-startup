@@ -239,13 +239,15 @@ kwBar(); render();
 
 
 def run(con, out: str | None = None, public: bool = False) -> Path:
-    """public=True: 외부 공개용 — 대표자 이름·신뢰도는 빼고, 검색엔진 색인을 막는다(주소를 아는 사람만)."""
+    """public=True: 외부 공개용 — 대표자 이름·신뢰도는 빼고, 검색엔진 색인을 막는다(주소를 아는 사람만).
+    site/index.html 로 쓰고, main 에 커밋·푸시하면 .github/workflows/pages.yml 이 GitHub Pages 로 배포한다."""
     data = collect(con)
     if public:
         for d in data:
             d["ceo"] = ""
             d["conf"] = ""
-    path = Path(out or config.DATA_DIR / ("public" if public else "") / "longlist.html")
+    # 공개용은 저장소의 site/index.html (GitHub Actions 가 이 폴더를 Pages 로 배포), 개인용은 data/longlist.html
+    path = Path(out or (config.ROOT / "site" / "index.html" if public else config.DATA_DIR / "longlist.html"))
     path.parent.mkdir(parents=True, exist_ok=True)
     body = PAGE.replace("__DATA__", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     body = body.replace("__DATE__", html.escape(f"{datetime.now():%Y-%m-%d %H:%M}"))
