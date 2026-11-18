@@ -83,7 +83,7 @@ def main(argv=None):
     s = sp.add_parser("incubators", help="보육·병원 창업·협회 디렉토리 (디지털헬스넷, SW 임상시험, 분당서울대병원, 연구중심병원, 연세대)")
     s.add_argument("--only", nargs="+", help="dhnet trials snubh rdh yonsei")
     s = sp.add_parser("opendata", help="공공데이터 파일·공개 API (벤처기업명단, 국민연금, 중기 R&D, 연구소기업, 첨복단지, AI바우처)")
-    s.add_argument("--only", nargs="+", help="venture nps techdev labco kmedi aiv")
+    s.add_argument("--only", nargs="+", help="venture nps techdev labco kmedi aiv extra cert gmp")
     s.add_argument("--download", action="store_true", help="data.go.kr 에서 최신 파일을 다시 받음")
     s = sp.add_parser("clusters", help="대학 창업지원단·지역 바이오 클러스터·TP 입주기업 (14곳)")
     s.add_argument("--only", nargs="+")
@@ -112,6 +112,7 @@ def main(argv=None):
 
     s = sp.add_parser("cards", help="롱리스트 카드 HTML (data/longlist.html)")
     s.add_argument("-o", "--out")
+    s.add_argument("--public", action="store_true", help="외부 공개용: 대표자 이름 제외, 검색 색인 막음 (data/public/longlist.html)")
 
     sp.add_parser("filter", help="하드 필터 재판정")
 
@@ -209,7 +210,7 @@ def main(argv=None):
         case "tags":
             payer_task.cli(con, a)
         case "cards":
-            cards.run(con, a.out)
+            cards.run(con, a.out, a.public)
         case "filter":
             filters.run(con)
         case "export":

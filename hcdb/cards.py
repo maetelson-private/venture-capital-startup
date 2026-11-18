@@ -186,11 +186,19 @@ kwBar(); render();
 </script></body></html>"""
 
 
-def run(con, out: str | None = None) -> Path:
+def run(con, out: str | None = None, public: bool = False) -> Path:
+    """public=True: 외부 공개용 — 대표자 이름·신뢰도는 빼고, 검색엔진 색인을 막는다(주소를 아는 사람만)."""
     data = collect(con)
-    path = Path(out or config.DATA_DIR / "longlist.html")
+    if public:
+        for d in data:
+            d["ceo"] = ""
+            d["conf"] = ""
+    path = Path(out or config.DATA_DIR / ("public" if public else "") / "longlist.html")
+    path.parent.mkdir(parents=True, exist_ok=True)
     body = PAGE.replace("__DATA__", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     body = body.replace("__DATE__", html.escape(f"{datetime.now():%Y-%m-%d %H:%M}"))
+    if public:
+        body = body.replace('<meta charset="utf-8">', '<meta charset="utf-8"><meta name="robots" content="noindex, nofollow">', 1)
     path.write_text(body, encoding="utf-8")
     print(f"카드 {len(data)}곳 → {path}")
     return path
