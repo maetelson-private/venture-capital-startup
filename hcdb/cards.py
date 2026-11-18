@@ -176,6 +176,27 @@ main{max-width:1240px;margin:0 auto;padding:16px;display:grid;grid-template-colu
 .warn{font-size:11px;color:var(--warn);background:var(--warn-soft);border-radius:6px;padding:2px 7px;align-self:flex-start}
 .foot{margin-top:auto;font-size:12px;color:var(--sub)}
 .src{font-size:11px;color:var(--sub);border-top:1px dashed var(--line);padding-top:6px}.src a{color:var(--sub)}.src a:hover{color:var(--ink)}.empty{grid-column:1/-1;text-align:center;color:var(--sub);padding:40px}
+.views{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.views button{font:inherit;font-size:13px;border:0;background:var(--card);color:var(--sub);padding:7px 12px;cursor:pointer}
+.views button.on{background:var(--accent);color:var(--card)}
+.dl{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:7px 12px;cursor:pointer}
+#sheet{display:none;padding:0 16px 24px}
+.xl{overflow:auto;max-height:calc(100vh - 210px);border:1px solid #c8c8c8;background:var(--card)}
+.xl table{border-collapse:collapse;font:12px/1.35 "Malgun Gothic","Apple SD Gothic Neo",sans-serif;color:var(--ink)}
+.xl th,.xl td{border:1px solid #d4d4d4;padding:3px 6px;white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
+.xl thead th{position:sticky;background:#f3f3f3;color:#444;font-weight:600;z-index:2}
+.xl thead tr.col th{top:0;text-align:center;font-weight:400;color:#777;height:20px}
+.xl thead tr.hd th{top:21px;cursor:pointer;text-align:left}
+.xl thead tr.hd th:hover{background:#e8efe9}
+.xl .rn{position:sticky;left:0;background:#f3f3f3;color:#777;text-align:center;min-width:42px;z-index:1}
+.xl thead .rn{z-index:3}
+.xl .nm{position:sticky;left:42px;background:var(--card);font-weight:600;z-index:1;border-right:2px solid #bfbfbf}
+.xl thead .nm{background:#f3f3f3;z-index:3}
+.xl tbody tr:hover td{background:#eef5f1}
+.xl a{color:#1a56b0}.xl td.num{text-align:right}.xl .wrap{white-space:normal;min-width:260px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .xl thead th,:root:not([data-theme="light"]) .xl .rn{background:#2a2a27;color:#bbb}
+:root:not([data-theme="light"]) .xl th,:root:not([data-theme="light"]) .xl td{border-color:#3d3d39}
+:root:not([data-theme="light"]) .xl a{color:#8ab4f8}:root:not([data-theme="light"]) .xl tbody tr:hover td{background:#26332e}}
 </style></head><body>
 <header><h1>디지털 헬스케어 롱리스트</h1>
 <div class="meta">하드필터 통과 + 범위 포함 · <span id="count"></span> · 생성 __DATE__ · 업력 미확인(설립일 없음)은 기본으로 숨김 · 💳 칩: 실선 = 근거, 점선 = 추정(사용자 유형), 회색 점 = 기본값(과제 묶음)</div></header>
@@ -188,9 +209,12 @@ main{max-width:1240px;margin:0 auto;padding:16px;display:grid;grid-template-colu
 <select id="pbasis"><option value="">지불자 단계 전체</option><option value="근거+추정">근거+추정 (기본값 제외)</option><option value="근거">근거만</option><option value="추정">추정(사용자 유형)만</option><option value="기본값">기본값(과제 묶음)만</option></select>
 <select id="tgroup"><option value="">과제 묶음 전체</option></select>
 <select id="ctype"><option value="">고객 유형 전체</option></select>
+<span class="views"><button id="vCard" class="on">카드</button><button id="vSheet">표 (엑셀)</button></span>
+<button class="dl" id="csv" title="지금 보이는 행 그대로, 엑셀에서 바로 열리는 CSV">CSV 내려받기</button>
 <select id="sort"><option value="new">최근 설립순</option><option value="sig">신호 많은 순</option><option value="name">이름순</option></select>
 </div><div class="kwbar" id="kwbar"></div></div>
 <main id="grid"></main>
+<section id="sheet"><div class="xl"><table id="xl"></table></div></section>
 <script>
 const DATA = __DATA__;
 const $ = s => document.querySelector(s); let activeKw = null;
@@ -221,7 +245,7 @@ const PB = {'근거':'근거', '추정':'추정·사용자 유형', '기본값':
 function payOk(d){ const v = $('#payer').value, b = $('#pbasis').value;
   if (!v && !b) return true;
   return d.payer.some(p => (!v || p.v === v) && (!b || (b === '근거+추정' ? p.b === '근거' || p.b === '추정' : p.b === b))); }
-function render(){ const q = $('#q').value.trim().toLowerCase();
+function filtered(){ const q = $('#q').value.trim().toLowerCase();
   let xs = DATA.filter(d => ($('#thin').checked || !d.thin) && (!$('#first').checked || !d.rounds) && ($('#unver').checked || !d.unverified)
     && (!activeKw || d.kws.includes(activeKw))
     && payOk(d) && (!$('#tgroup').value || d.tgroup === $('#tgroup').value)
@@ -230,21 +254,67 @@ function render(){ const q = $('#q').value.trim().toLowerCase();
   const s = $('#sort').value;
   xs.sort(s === 'name' ? (a,b)=>a.name.localeCompare(b.name,'ko') : s === 'sig' ? (a,b)=>b.signals.length-a.signals.length
        : (a,b)=>(b.founded||'0').localeCompare(a.founded||'0'));
+  if (sheetSort) { const c = COLS[sheetSort.i]; xs.sort((a,b) => {
+      const x = c.v(a), y = c.v(b);
+      if ((x === '' || x == null) !== (y === '' || y == null)) return (x === '' || x == null) ? 1 : -1;  // 빈 칸은 항상 아래로
+      const r =(typeof x === 'number' && typeof y === 'number') ? x - y : String(x).localeCompare(String(y), 'ko');
+      return sheetSort.dir * r; }); }
+  return xs; }
+// 표(엑셀) 보기: 화면 표와 CSV 가 같은 열 정의를 쓴다
+const url = d => d.url ? (d.url.startsWith('http') ? d.url : 'http://' + d.url) : '';
+const COLS = [
+  {h:'회사명', v:d=>d.name, cls:'nm'}, {h:'투자 이력', v:d=>d.rounds ? `투자 ${d.rounds}회` : '첫 투자 후보'},
+  {h:'설립', v:d=>d.founded || (d.pre ? '예비창업' : '')}, {h:'업력(년)', v:d=>d.age ?? '', cls:'num'},
+  {h:'지역', v:d=>d.sido}, {h:'대표', v:d=>d.ceo}, {h:'한 줄 설명', v:d=>d.one, cls:'wrap'},
+  {h:'키워드', v:d=>d.kws.join(', ')},
+  {h:'지불자', v:d=>d.payer.map(p=>p.b==='근거'||p.b==='none'?p.v:`${p.v}(${p.b})`).join(', ')},
+  {h:'과제', v:d=>d.task}, {h:'과제 묶음', v:d=>d.tgroup}, {h:'사용자', v:d=>d.user},
+  {h:'신호', v:d=>d.signals.map(s=>s.t).join(', ')}, {h:'투자사', v:d=>d.investors.join(', ')},
+  {h:'출처', v:d=>d.src.map(x=>x.t).join(', '), link:d=>d.src}, {h:'홈페이지', v:url, href:url},
+];
+let view = 'card', sheetSort = null;
+const colName = i => { let s = ''; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = (i - m - 1) / 26; } return s; };
+function sheet(xs){
+  const nmc = c => c.cls === 'nm' ? 'nm' : '';
+  const head = `<thead><tr class="col"><th class="rn"></th>${COLS.map((c,i)=>`<th class="${nmc(c)}">${colName(i)}</th>`).join('')}</tr>
+    <tr class="hd"><th class="rn">1</th>${COLS.map((c,i)=>`<th data-i="${i}" class="${nmc(c)}">${esc(c.h)}${sheetSort&&sheetSort.i===i?(sheetSort.dir>0?' ▲':' ▼'):''}</th>`).join('')}</tr></thead>`;
+  const body = xs.map((d,r)=>`<tr><td class="rn">${r+2}</td>${COLS.map(c=>{ const v = c.v(d);
+      let inner = esc(v);
+      if (c.href && v) inner = `<a href="${esc(c.href(d))}" target="_blank" rel="noopener">${esc(v)}</a>`;
+      if (c.link) inner = c.link(d).map(x=>x.u?`<a href="${esc(x.u)}" target="_blank" rel="noopener">${esc(x.t)}</a>`:esc(x.t)).join(', ');
+      return `<td class="${c.cls||''}" title="${esc(v)}">${inner}</td>`; }).join('')}</tr>`).join('');
+  $('#xl').innerHTML = head + `<tbody>${body}</tbody>`; }
+function render(){ const xs = filtered();
   $('#count').textContent = `${xs.length} / ${DATA.length}곳`;
-  $('#grid').innerHTML = xs.length ? xs.map(card).join('') : '<div class="empty">조건에 맞는 회사가 없어요</div>'; }
+  $('#grid').style.display = view === 'card' ? '' : 'none'; $('#sheet').style.display = view === 'sheet' ? 'block' : 'none';
+  if (view === 'sheet') sheet(xs);
+  else $('#grid').innerHTML = xs.length ? xs.map(card).join('') : '<div class="empty">조건에 맞는 회사가 없어요</div>'; }
+$('#xl').addEventListener('click', e => { const th = e.target.closest('tr.hd th[data-i]'); if (!th) return;
+  const i = +th.dataset.i;
+  sheetSort = sheetSort && sheetSort.i === i ? (sheetSort.dir > 0 ? {i, dir:-1} : null) : {i, dir:1}; render(); });
+function setView(v){ view = v; $('#vCard').classList.toggle('on', v==='card'); $('#vSheet').classList.toggle('on', v==='sheet');
+  try { localStorage.setItem('longlistView', v); } catch(e) {} render(); }
+$('#vCard').onclick = () => setView('card'); $('#vSheet').onclick = () => setView('sheet');
+$('#csv').onclick = () => {
+  const cell = x => { const t = String(x ?? ''); return /[",\\n\\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  const rows = [COLS.map(c=>c.h)].concat(filtered().map(d => COLS.map(c =>
+    c.link ? c.link(d).map(x => x.t + (x.u ? ` (${x.u})` : '')).join(', ') : c.v(d))));
+  const csv = '\\ufeff' + rows.map(r => r.map(cell).join(',')).join('\\r\\n');  // BOM: 엑셀이 한글을 UTF-8 로 읽게
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+  a.download = `헬스케어_롱리스트_${new Date().toISOString().slice(0,10)}.csv`; a.click(); URL.revokeObjectURL(a.href); };
 ['q','first','unver','thin','sort','payer','pbasis','tgroup','ctype'].forEach(id => $('#'+id).addEventListener('input', render));
 fillSel('payer', DATA.flatMap(d => d.payer.map(p => p.v))); fillSel('ctype', DATA.flatMap(d => d.ctype)); fillSel('tgroup', DATA.map(d => d.tgroup));
-kwBar(); render();
+kwBar(); try { view = localStorage.getItem('longlistView') || 'card'; } catch(e) {} setView(view);
 </script></body></html>"""
 
 
 def run(con, out: str | None = None, public: bool = False) -> Path:
-    """public=True: 외부 공개용 — 대표자 이름·신뢰도는 빼고, 검색엔진 색인을 막는다(주소를 아는 사람만).
+    """public=True: 외부 공개용 — 내부 신뢰도 표시는 빼고, 검색엔진 색인을 막는다(주소를 아는 사람만). 대표자 이름은 보인다.
     site/index.html 로 쓰고, main 에 커밋·푸시하면 .github/workflows/pages.yml 이 GitHub Pages 로 배포한다."""
     data = collect(con)
     if public:
         for d in data:
-            d["ceo"] = ""
             d["conf"] = ""
     # 공개용은 저장소의 site/index.html (GitHub Actions 가 이 폴더를 Pages 로 배포), 개인용은 data/longlist.html
     path = Path(out or (config.ROOT / "site" / "index.html" if public else config.DATA_DIR / "longlist.html"))

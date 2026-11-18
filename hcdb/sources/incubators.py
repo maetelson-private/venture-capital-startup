@@ -270,14 +270,14 @@ def run_bi(con, recent_years: int = 6) -> None:
             pre = x.get("기업형태") == "예비창업자" or name.startswith("예비창업")
             when = norm_date(x.get("창업일"))
             future = bool(when and when > date.today().isoformat())
-            # 예비창업자는 기업명 칸이 '예비창업자(홍길동)' 처럼 개인 이름이다 → 대표자명은 저장하지 않고,
-            # 매칭은 원래 이름(별칭)으로 하되 보이는 이름은 '예비창업팀 (센터) #id' 로 바꾼다 (카드·공개 페이지에 개인 이름 노출 방지)
+            # 예비창업자는 기업명 칸이 '예비창업자(홍길동)' 처럼 개인 이름이다 → 매칭은 원래 이름(별칭)으로 하되
+            # 보이는 회사명은 '예비창업팀 (센터) #id' 로 바꾼다. 사람 이름은 대표자 칸에만 둔다
             person = name.startswith("예비창업") or "예비창업자" in name
-            y = {"name": name, "ceo": None if person else x.get("대표자명"),
+            y = {"name": name, "ceo": x.get("대표자명"),
                  "founded_date": None if (pre or future) else when, "service_summary": x.get("주생산품")}
             cid = _save(con, "inc:bi", BI_SRC, y, "상", f"{x.get('센터명')} 입주")
             if person:
-                con.execute("UPDATE companies SET name=?, ceo=NULL WHERE id=?",
+                con.execute("UPDATE companies SET name=? WHERE id=?",
                             (f"예비창업팀 ({x.get('센터명') or '창업보육센터'}) #{cid}", cid))
             if pre or future:
                 db.set_fields(con, cid, {"is_pre_startup": 1, "expected_founding": (when or "")[:7]},
