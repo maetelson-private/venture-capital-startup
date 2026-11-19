@@ -225,6 +225,9 @@ def summary(r: dict) -> str:
     for k in ("linkedin", "kakao"):
         if k in r["social"]:
             parts.append(f"{k} {r['social'][k]}")
+    if not parts and r["social"]:  # SNS 만 찾은 곳은 첫 번째 SNS 라도
+        k, v = next(iter(r["social"].items()))
+        parts.append(f"{k} {v}")
     return " · ".join(parts)
 
 
@@ -256,7 +259,13 @@ def _report(results: list[dict], total_longlist: int, path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def run(con, dry_run=False, ids=None, limit=None, workers=6) -> None:
+def run(con, dry_run=False, ids=None, limit=None, workers=6, load=False) -> None:
+    if load:  # 직전 dry-run 결과(data/contacts.json)를 다시 크롤링하지 않고 그대로 반영
+        results = json.loads((config.DATA_DIR / "contacts.json").read_text(encoding="utf-8"))
+        if ids:
+            results = [r for r in results if r["id"] in set(ids)]
+        print(f"data/contacts.json {len(results)}곳 불러옴")
+        return _apply(con, results)
     targets = _targets(con, ids, limit)
     total = con.execute("SELECT count(*) FROM v_companies WHERE hard_filter='통과' AND scope='포함'").fetchone()[0]
     print(f"홈페이지 있는 롱리스트 {len(targets)}곳 크롤링 (워커 {workers})")
@@ -273,6 +282,10 @@ def run(con, dry_run=False, ids=None, limit=None, workers=6) -> None:
     print(f"→ {config.DATA_DIR / 'contacts_dryrun.md'}")
     if dry_run:
         return
+    _apply(con, results)
+
+
+def _apply(con, results: list[dict]) -> None:
     n = 0
     with db.run_log(con, "contacts", f"n={len(results)}") as st:
         for r in results:

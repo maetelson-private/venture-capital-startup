@@ -115,6 +115,7 @@ def main(argv=None):
     s.add_argument("--ids", type=int, nargs="*")
     s.add_argument("--limit", type=int)
     s.add_argument("--workers", type=int, default=6)
+    s.add_argument("--load", action="store_true", help="다시 크롤링하지 않고 data/contacts.json 을 DB 에 반영")
 
     s = sp.add_parser("cards", help="롱리스트 카드 HTML (data/longlist.html)")
     s.add_argument("-o", "--out")
@@ -216,7 +217,7 @@ def main(argv=None):
         case "tags":
             payer_task.cli(con, a)
         case "contacts":
-            contacts.run(con, a.dry_run, a.ids, a.limit, a.workers)
+            contacts.run(con, a.dry_run, a.ids, a.limit, a.workers, a.load)
         case "cards":
             cards.run(con, a.out, a.public)
         case "filter":
