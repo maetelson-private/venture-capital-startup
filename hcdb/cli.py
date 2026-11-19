@@ -2,7 +2,7 @@
 import argparse
 
 from . import cards, db, dupes, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters, payer_task, founding
+from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters, payer_task, founding, contacts
 
 
 def main(argv=None):
@@ -110,6 +110,12 @@ def main(argv=None):
     s.add_argument("--no-fetch", action="store_true", help="홈페이지를 새로 받지 않음")
     s.add_argument("--workers", type=int, default=4)
 
+    s = sp.add_parser("contacts", help="롱리스트 홈페이지에서 공개 연락 창구(메일·전화·문의 폼·SNS) 수집")
+    s.add_argument("--dry-run", action="store_true", help="data/contacts_dryrun.md 만 쓰고 DB 반영 안 함")
+    s.add_argument("--ids", type=int, nargs="*")
+    s.add_argument("--limit", type=int)
+    s.add_argument("--workers", type=int, default=6)
+
     s = sp.add_parser("cards", help="롱리스트 카드 HTML (data/longlist.html)")
     s.add_argument("-o", "--out")
     s.add_argument("--public", action="store_true", help="외부 공개용: 대표자 이름 제외, 검색 색인 막음 (site/index.html → GitHub Pages)")
@@ -209,6 +215,8 @@ def main(argv=None):
             scope.run(con, a.redo)
         case "tags":
             payer_task.cli(con, a)
+        case "contacts":
+            contacts.run(con, a.dry_run, a.ids, a.limit, a.workers)
         case "cards":
             cards.run(con, a.out, a.public)
         case "filter":
