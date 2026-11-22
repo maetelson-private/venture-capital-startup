@@ -295,3 +295,120 @@ def _apply(con, results: list[dict]) -> None:
             st["docs"] += 1
         con.commit()
     print(f"contact_channel 반영 {n}곳")
+
+
+# ── 홈페이지가 없는 롱리스트 기업: 네이버 웹문서 검색 → 후보 도메인 열어서 회사명 확인 ─────────────────
+# NAVER API HUB 애플리케이션에서 '검색 > 웹문서'가 켜져 있어야 한다 (뉴스만 켜져 있으면 401)
+NAVER_WEB = "https://naverapihub.apigw.ntruss.com/search/v1/webkr"
+_SKIP_HOST = re.compile(
+    r"naver\.|daum\.|kakao|google\.|youtube|instagram|facebook|linkedin|twitter|x\.com|tistory|blog|brunch|velog|"
+    r"notion\.|wikipedia|namu\.wiki|go\.kr$|ac\.kr$|re\.kr$|or\.kr$|thevc|innoforest|rocketpunch|wanted|saramin|"
+    r"jobkorea|jobplanet|catch\.co|nextunicorn|bizinfo|k-startup|smes|kipris|dbpia|scienceon|riss|"
+    r"news|ilbo|times|press|today|economy|biz\.|joongang|chosun|donga|hankyung|mk\.co|etnews|zdnet|"
+    r"edaily|hani|khan|newsis|yna\.co|yonhap|mt\.co|sedaily|asiae|heraldcorp|fnnews|dt\.co|inews|"
+    r"medical|doctorsnews|dailymedi|docdocdoc|medigate|hitnews|kmedinfo|pharm|bosa|venturesquare|platum|"
+    r"wowtale|startupn|besuccess|apps\.apple|play\.google|smartstore|coupang|11st|gmarket|ohou|"
+    r"pdf|scribd|slideshare|github\.io|wixsite|imweb\.me|modoo\.at|creatorlink|cafe24\.com$|"
+    r"holdings|career|recruit|greetinghr|flexg|shop|mall|daily|journal|magazine|tv\.|portal|hub\.|kotra|kised")
+# 홈페이지가 헬스케어 회사의 것인지 (같은 이름의 다른 업종 회사를 거르기 위해)
+_HEALTH_PAGE = re.compile(r"의료|헬스|건강|병원|진단|치료|재활|돌봄|요양|바이오|메디|환자|의사|간호|수면|치매|인지|"
+                          r"심리|정신|웰니스|시니어|헬스케어|임상|약국|치과|health|medical|clinic|care|bio|patient", re.I)
+_NOT_COMPANY_TITLE = re.compile(r"의원|치과|한의원|병원|클리닉|안과|센터|학교|학원|웨딩|동물병원|부동산|"
+                                r"인테리어|간판|자동문|악기|서버|살롱|트레이닝")
+_CORP_WORDS = re.compile(r"\(주\)|㈜|주식회사|\(유\)|유한회사|\s+")
+
+
+def _naver_web(query: str, display: int = 10) -> list[dict]:
+    r = http_get(NAVER_WEB, params={"query": query, "display": display}, check_robots=False,
+                 headers={"X-NCP-APIGW-API-KEY-ID": config.NAVER_CLIENT_ID,
+                          "X-NCP-APIGW-API-KEY": config.NAVER_CLIENT_SECRET})
+    return r.json().get("items", [])
+
+
+def _cands(items) -> list[str]:
+    out = []
+    for it in items:
+        h = urlparse(it.get("link") or "").netloc.lower().removeprefix("www.")
+        if h and "." in h and not _SKIP_HOST.search(h) and h not in out:
+            out.append(h)
+    return out[:4]
+
+
+def _names(name: str) -> list[str]:
+    base = _CORP_WORDS.sub("", name or "")
+    out = {base}
+    m = re.match(r"(.+?)\((.+)\)$", base)  # '뉴지엄(NUSEUM)' → 뉴지엄, NUSEUM
+    if m:
+        out |= {m.group(1), m.group(2)}
+    return [n for n in out if len(n) >= 2]
+
+
+def _verify(host: str, names: list[str]) -> str | None:
+    """후보 도메인 첫 화면에 회사명(띄어쓰기·법인 표기 제거)이 있으면 최종 주소를 돌려준다."""
+    for u in (f"https://{host}/", f"https://www.{host}/", f"http://{host}/"):
+        got = _get(u)
+        if not got:
+            continue
+        final, html = got
+        soup = BeautifulSoup(html, "html.parser")
+        for t in soup(["script", "style", "noscript"]):
+            t.decompose()
+        raw_title = soup.title.get_text() if soup.title else ""
+        if _NOT_COMPANY_TITLE.search(raw_title):  # 같은 이름의 병의원·학원·센터·쇼핑몰 (사람이 검토할 때 가장 많이 걸러낸 유형)
+            return None
+        title = _CORP_WORDS.sub("", raw_title).lower()
+        text = _CORP_WORDS.sub("", soup.get_text(" ")).lower()
+        for n in (n.lower() for n in names):
+            # 제목에 회사명이 있으면 확정. 본문에만 있으면 4글자 이상 이름이 두 번 이상 나올 때만 (짧은 이름은 남의 사이트에도 흔함)
+            if (n in title or (len(n) >= 4 and text.count(n) >= 2)) and _HEALTH_PAGE.search(text + " " + title):
+                return final
+        return None  # 열리긴 했는데 회사명이 없다 → 다른 회사
+    return None
+
+
+def find_homepage(cid: int, name: str, summary: str) -> dict:
+    names = _names(name)
+    res = {"id": cid, "name": name, "url": "", "query": ""}
+    if not names or all(len(n) < 3 for n in names if re.search(r"[가-힣]", n)) and not any(
+            re.search(r"[A-Za-z]{4,}", n) for n in names):
+        res["query"] = "이름이 너무 짧아 건너뜀"
+        return res
+    kw = re.split(r"[,\s/·]+", summary or "")
+    queries = [f'"{names[0]}"'] + ([f'{names[0]} {kw[0]}'] if kw and kw[0] else [])
+    for q in queries:
+        try:
+            items = _naver_web(q)
+        except requests.RequestException as e:
+            res["query"] = f"검색 실패 {e.__class__.__name__}"
+            return res
+        for h in _cands(items):
+            url = _verify(h, names)
+            if url:
+                res.update(url=url, query=q)
+                return res
+    res["query"] = " / ".join(queries)
+    return res
+
+
+def run_find(con, ids=None, dry_run=False, workers=4) -> list[dict]:
+    """롱리스트(하드필터 통과·범위 포함, 예비창업팀 제외) 중 홈페이지가 없는 곳."""
+    rows = con.execute("""SELECT id, name, service_summary FROM v_companies
+                          WHERE hard_filter='통과' AND scope='포함' AND is_pre_startup=0
+                          AND (url IS NULL OR url='') ORDER BY id""").fetchall()
+    if ids:
+        rows = [r for r in rows if r["id"] in set(ids)]
+    print(f"홈페이지 없는 롱리스트 {len(rows)}곳 네이버 웹문서 검색")
+    out = []
+    with ThreadPoolExecutor(workers) as ex:
+        for r in ex.map(lambda r: find_homepage(r["id"], r["name"], r["service_summary"] or ""), rows):
+            out.append(r)
+            print(f"  [{len(out)}/{len(rows)}] {r['name']}: {r['url'] or '-'}")
+    (config.DATA_DIR / "homepages_found.json").write_text(json.dumps(out, ensure_ascii=False, indent=1),
+                                                          encoding="utf-8")
+    found = [r for r in out if r["url"]]
+    print(f"홈페이지 확인 {len(found)}곳 → data/homepages_found.json")
+    if not dry_run:
+        for r in found:
+            db.set_field(con, r["id"], "url", r["url"], "naver-web", r["url"], "중")
+        con.commit()
+    return found
