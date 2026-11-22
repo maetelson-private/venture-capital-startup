@@ -285,8 +285,57 @@ def run_biokorea(con, dry_run=False) -> dict:
                   f"BIO KOREA {date.today().year} 참가", dry_run)
 
 
+# ── 메디테크 어워드 (수상 기관·기업) ──────────────────────────────────────────
+MEDITEK = "https://www.meditek.or.kr/kr/awards/award_list.php"
+
+
+def run_meditek(con, dry_run=False, years: int = 3) -> dict:
+    items = []
+    for year in range(date.today().year - years + 1, date.today().year + 1):
+        for start in range(0, 120, 12):
+            r = http_get(MEDITEK, params={"search_year": year, "startPage": start})
+            r.encoding = r.apparent_encoding
+            cards = BeautifulSoup(r.text, "html.parser").select("a[href*=award_view]")
+            if not cards:
+                break
+            for a in cards:
+                name = a.select_one(".name")
+                if name and not is_org(name.get_text(strip=True)):
+                    sub = a.select_one(".sub-name")
+                    items.append({"name": name.get_text(strip=True), "page": a["href"],
+                                  "service_summary": sub.get_text(" ", strip=True) if sub else None, "_year": year})
+            if len(cards) < 12:
+                break
+    print(f"메디테크 어워드 최근 {years}년 수상 기업 {len(items)}건")
+    return finish(con, "ev:meditek", MEDITEK, items, lambda x: f"메디테크 어워드 {x['_year']}", dry_run)
+
+
+# ── COMEUP Stars (선정팀·알럼나이) — 화면 JS 번들 안의 정적 목록 ───────────────────
+COMEUP = "https://www.comeup.org"
+
+
+def run_comeup(con, dry_run=False) -> dict:
+    from .univ import is_health
+    idx = re.findall(r'src="(/assets/index-[^"]+\.js)"', http_get(COMEUP + "/").text)
+    stars = re.findall(r"assets/(Stars-[A-Za-z0-9_-]+\.js)", http_get(COMEUP + idx[0]).text) if idx else []
+    if not stars:
+        print("COMEUP: Stars 번들을 못 찾음 (사이트 배포가 바뀜)")
+        return {"label": "ev:comeup", "total": 0, "new": 0}
+    b = http_get(f"{COMEUP}/assets/{stars[0]}").text
+    rows = re.findall(r"\{n:`([^`]+)`,c:`([^`]*)`,y:`([^`]*)`,f:`[^`]*`,u:`([^`]*)`\}", b)
+    rows += re.findall(r"\{name:`([^`]+)`,cat:`([^`]*)`,year:`([^`]*)`,logo:`[^`]*`,url:`([^`]*)`\}", b)
+    items = []
+    for name, cat, year, url in rows:
+        if is_health(cat) or re.search(r"헬스|의료|바이오|메디|케어|병원|건강", cat):
+            y = re.search(r"\d{4}", year)
+            items.append({"name": name, "url": url or None, "service_summary": cat, "_year": y.group() if y else ""})
+    print(f"COMEUP Stars 번들 {len(rows)}팀 중 헬스케어 해시태그 {len(items)}팀")
+    return finish(con, "ev:comeup", COMEUP + "/comeupstarsalumni", items,
+                  lambda x: f"COMEUP Stars {x['_year']}".strip(), dry_run)
+
+
 SOURCES = {"kimes": run_kimes, "kimesbusan": run_kimesbusan, "ghcw": run_ghcw, "reha": run_reha, "khf": run_khf,
-           "biokorea": run_biokorea}
+           "biokorea": run_biokorea, "meditek": run_meditek, "comeup": run_comeup}
 
 
 def run(con, only=None, dry_run=False) -> list[dict]:

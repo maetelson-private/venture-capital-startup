@@ -229,8 +229,50 @@ def run_kstartup(con, dry_run=False) -> dict:
                   lambda x: f"올해의 K-스타트업 {x['_year']} 통합본선", dry_run)
 
 
+# ── 원주의료기기산업진흥원 기업소개 ───────────────────────────────────────────
+WMIT = "https://www.wmit.or.kr/contents/contents.do?ciIdx=1132&menuId=2933"
+
+
+def run_wmit(con, dry_run=False) -> dict:
+    s = _soup(WMIT)
+    items = []
+    for tr in s.select("table tbody tr"):
+        th, tds = tr.select_one("th"), tr.select("td")
+        if not th or is_org(_t(th)):
+            continue
+        a = tr.select_one("a[href^=http]")
+        items.append({"name": _t(th), "service_summary": _t(tds[0]) if tds else None, "url": a["href"] if a else None,
+                      "sido": "강원"})
+    print(f"원주의료기기 기업소개 {len(items)}곳")
+    return finish(con, "dir:wmit", WMIT, items, "원주의료기기 기업", dry_run)
+
+
+# ── data.go.kr 입주기업 파일 (대구 첨복단지, 판교 창업존, 대전 팁스타운) ───────────────
+DATAGO = {"15036286": ("대구 첨단의료복합단지 입주", None),
+          "15088134": ("판교 창업존 입주", re.compile(r"바이오|의료|헬스|제약")),
+          "15103200": ("대전 팁스타운 입주", re.compile(r"바이오|의료|헬스|제약"))}
+
+
+def run_datago(con, dry_run=False) -> list[dict]:
+    from .opendata import DIR, _rows, fetch
+    out = []
+    for ds, (program, keep) in DATAGO.items():
+        path = DIR / f"{ds}.csv"
+        if not path.exists():
+            path = fetch(ds)
+        items = []
+        for r in _rows(path):
+            name = r.get("업체명") or r.get("입주기업명") or r.get("기업명") or ""
+            field = r.get("업종") or r.get("분야") or ""
+            if name and not is_org(name) and (keep is None or keep.search(field)):
+                items.append({"name": name, "service_summary": field or None, "kws": [field] if field else []})
+        print(f"data.go.kr {ds} {program}: {len(items)}곳")
+        out.append(finish(con, f"dir:od{ds}", f"https://www.data.go.kr/data/{ds}/fileData.do", items, program, dry_run))
+    return out
+
+
 SOURCES = {"campustown": run_campustown, "kddf": run_kddf, "koreabio": run_koreabio, "kothea": run_kothea,
-           "nextunicorn": run_nextunicorn, "kstartup": run_kstartup}
+           "nextunicorn": run_nextunicorn, "kstartup": run_kstartup, "wmit": run_wmit, "datago": run_datago}
 
 
 def run(con, only=None, dry_run=False) -> list[dict]:
