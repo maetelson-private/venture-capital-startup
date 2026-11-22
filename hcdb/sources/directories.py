@@ -271,8 +271,43 @@ def run_datago(con, dry_run=False) -> list[dict]:
     return out
 
 
+# ── 관악S밸리 입주·졸업기업 (관악중소벤처진흥원) — 일반 UA 허용 (AI 학습 봇만 이름으로 막음) ──────────
+GSVA = "https://gsva.or.kr/main"
+
+
+def run_gsva(con, dry_run=False) -> dict:
+    items = []
+    for path in ("ent/list.do", "ent_grdt/list.do"):
+        for page in range(1, 30):
+            s = _soup(f"{GSVA}/{path}", params={"page": page})
+            cards = s.select("li.ovw_item")
+            if not cards:
+                break
+            for li in cards:
+                lines = [l.strip() for l in li.get_text("\n", strip=True).splitlines() if l.strip()]
+                if not lines:
+                    continue
+                kv = {lines[i]: lines[i + 1] for i in range(len(lines) - 1)
+                      if lines[i] in ("대표자명", "센터명", "설립일", "업종") and lines[i + 1] not in
+                      ("대표자명", "센터명", "입주호실", "설립일", "업종")}
+                name = lines[0]
+                if is_org(name):
+                    continue
+                a = li.select_one("a[href*=ent_sn]")
+                items.append({"name": name, "ceo": kv.get("대표자명"), "founded_date": norm_date(kv.get("설립일")),
+                              "service_summary": kv.get("업종"), "sido": "서울",
+                              "page": f"{GSVA}/{path.split('/')[0]}/{a['href']}" if a else f"{GSVA}/{path}",
+                              "_grad": "grdt" in path})
+            if len(cards) < 12:
+                break
+    print(f"관악S밸리 입주·졸업기업 {len(items)}곳")
+    return finish(con, "dir:gsva", f"{GSVA}/ent/list.do", items,
+                  lambda x: "관악S밸리 졸업" if x["_grad"] else "관악S밸리 입주", dry_run)
+
+
 SOURCES = {"campustown": run_campustown, "kddf": run_kddf, "koreabio": run_koreabio, "kothea": run_kothea,
-           "nextunicorn": run_nextunicorn, "kstartup": run_kstartup, "wmit": run_wmit, "datago": run_datago}
+           "nextunicorn": run_nextunicorn, "kstartup": run_kstartup, "wmit": run_wmit, "datago": run_datago,
+           "gsva": run_gsva}
 
 
 def run(con, only=None, dry_run=False) -> list[dict]:
