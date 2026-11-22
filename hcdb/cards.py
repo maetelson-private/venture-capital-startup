@@ -78,6 +78,25 @@ def _sources(con, cid: int) -> list[dict]:
     return out
 
 
+def _contacts(s: str | None) -> list[dict]:
+    """contact_channel 요약 한 줄('메일 a, b · 전화 x · 문의 url · linkedin url')을 링크 목록으로."""
+    out = []
+    for part in (s or "").split(" · "):
+        kind, _, rest = part.partition(" ")
+        for v in ([x.strip() for x in rest.split(",")] if kind in ("메일", "전화") else [rest.strip()]):
+            if not v:
+                continue
+            if kind == "메일":
+                out.append({"k": "메일", "t": v, "u": "mailto:" + v})
+            elif kind == "전화":
+                out.append({"k": "전화", "t": v, "u": "tel:" + v.replace("-", "")})
+            elif kind == "문의":
+                out.append({"k": "문의", "t": "문의 페이지", "u": v})
+            elif v.startswith("http"):
+                out.append({"k": kind, "t": {"linkedin": "LinkedIn", "kakao": "카카오채널"}.get(kind, kind), "u": v})
+    return out
+
+
 def collect(con) -> list[dict]:
     out = []
     rows = con.execute("""SELECT * FROM v_companies WHERE hard_filter='통과' AND scope='포함'""").fetchall()
@@ -130,6 +149,7 @@ def collect(con) -> list[dict]:
             "investors": [x for x in (r["investor_names"] or "").split(",") if x][:4],
             "rounds": r["n_rounds"] or 0,
             "url": r["url"] or "",
+            "contact": _contacts(r["contact_channel"]),
             "ceo": r["ceo"] or "",
             "conf": r["confidence"] or "",
             # 밸류 미상은 거의 전부라 표시하지 않고, 업력을 알 수 없을 때만 경고 (예비창업팀은 업력 판단 대상 아님)
@@ -174,6 +194,7 @@ main{max-width:1240px;margin:0 auto;padding:16px;display:grid;grid-template-colu
 .pay.est{background:transparent;border:1px dashed var(--accent);color:var(--accent)}
 .pay.def{background:transparent;border:1px dotted var(--sub);color:var(--sub)}
 .warn{font-size:11px;color:var(--warn);background:var(--warn-soft);border-radius:6px;padding:2px 7px;align-self:flex-start}
+.ct{font-size:12px;color:var(--sub);word-break:break-all}.ct a{color:var(--accent)}
 .foot{margin-top:auto;font-size:12px;color:var(--sub)}
 .src{font-size:11px;color:var(--sub);border-top:1px dashed var(--line);padding-top:6px}.src a{color:var(--sub)}.src a:hover{color:var(--ink)}.empty{grid-column:1/-1;text-align:center;color:var(--sub);padding:40px}
 .views{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -239,6 +260,7 @@ function card(d){ const facts = [d.founded ? `${d.founded} 설립` : '설립일 
   ${d.task || d.user ? `<div class="ptc">${d.task ? `<span>과제 <b>${esc(d.task)}</b>${d.tgroup!=='미분류' ? ' · '+esc(d.tgroup) : ''}</span>` : ''}${d.user ? `<span>사용자 <b>${esc(d.user)}</b></span>` : ''}</div>` : ''}
   ${d.signals.length ? `<div class="chips">${d.signals.map(s=>`<span class="sig ${s.k}">${esc(s.t)}</span>`).join('')}</div>` : ''}
   ${d.check ? `<span class="warn">${esc(d.reason)}</span>` : ''}
+  ${d.contact.length ? `<div class="ct">연락 ${d.contact.map(x => `<a href="${esc(x.u)}"${x.u.startsWith('http')?' target="_blank" rel="noopener"':''}>${esc(x.t)}</a>`).join(' · ')}</div>` : ''}
   <div class="foot">${d.investors.length ? '투자: ' + esc(d.investors.join(', ')) : ''}</div>
   ${d.src.length ? `<div class="src">출처: ${d.src.map(x => x.u ? `<a href="${esc(x.u)}" target="_blank" rel="noopener">${esc(x.t)}</a>` : esc(x.t)).join(' · ')}</div>` : ''}</article>`; }
 const PB = {'근거':'근거', '추정':'추정·사용자 유형', '기본값':'기본값·과제 묶음'};
@@ -250,7 +272,7 @@ function filtered(){ const q = $('#q').value.trim().toLowerCase();
     && (!activeKw || d.kws.includes(activeKw))
     && payOk(d) && (!$('#tgroup').value || d.tgroup === $('#tgroup').value)
     && (!$('#ctype').value || d.ctype.includes($('#ctype').value))
-    && (!q || [d.name, d.one, d.task, d.user, d.payer.map(p=>p.v).join(' '), d.kws.join(' '), d.signals.map(s=>s.t).join(' '), d.src.map(x=>x.t).join(' ')].join(' ').toLowerCase().includes(q)));
+    && (!q || [d.name, d.one, d.task, d.user, d.payer.map(p=>p.v).join(' '), d.kws.join(' '), d.signals.map(s=>s.t).join(' '), d.src.map(x=>x.t).join(' '), d.contact.map(x=>x.t).join(' ')].join(' ').toLowerCase().includes(q)));
   const s = $('#sort').value;
   xs.sort(s === 'name' ? (a,b)=>a.name.localeCompare(b.name,'ko') : s === 'sig' ? (a,b)=>b.signals.length-a.signals.length
        : (a,b)=>(b.founded||'0').localeCompare(a.founded||'0'));
@@ -271,6 +293,7 @@ const COLS = [
   {h:'과제', v:d=>d.task}, {h:'과제 묶음', v:d=>d.tgroup}, {h:'사용자', v:d=>d.user},
   {h:'신호', v:d=>d.signals.map(s=>s.t).join(', ')}, {h:'투자사', v:d=>d.investors.join(', ')},
   {h:'출처', v:d=>d.src.map(x=>x.t).join(', '), link:d=>d.src}, {h:'홈페이지', v:url, href:url},
+  {h:'연락처', v:d=>d.contact.map(x=>x.k==='문의'||x.k==='linkedin'||x.k==='kakao'?`${x.t} ${x.u}`:x.t).join(', '), link:d=>d.contact, csv:true},
 ];
 let view = 'card', sheetSort = null;
 const colName = i => { let s = ''; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = (i - m - 1) / 26; } return s; };
@@ -298,7 +321,7 @@ $('#vCard').onclick = () => setView('card'); $('#vSheet').onclick = () => setVie
 $('#csv').onclick = () => {
   const cell = x => { const t = String(x ?? ''); return /[",\\n\\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
   const rows = [COLS.map(c=>c.h)].concat(filtered().map(d => COLS.map(c =>
-    c.link ? c.link(d).map(x => x.t + (x.u ? ` (${x.u})` : '')).join(', ') : c.v(d))));
+    c.csv ? c.v(d) : c.link ? c.link(d).map(x => x.t + (x.u ? ` (${x.u})` : '')).join(', ') : c.v(d))));
   const csv = '\\ufeff' + rows.map(r => r.map(cell).join(',')).join('\\r\\n');  // BOM: 엑셀이 한글을 UTF-8 로 읽게
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
