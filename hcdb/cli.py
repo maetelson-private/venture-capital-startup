@@ -2,7 +2,7 @@
 import argparse
 
 from . import cards, db, dupes, export, filters
-from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters, payer_task, founding, contacts
+from .sources import boards, dart, enrich, kbic, portfolio, scope, tips, kipris, lab, manual, mfds, news, notice, nps, nts, univ, briefing, dart_holdings, holding_news, incubators, opendata, clusters, payer_task, founding, contacts, events, directories
 
 
 def main(argv=None):
@@ -110,6 +110,14 @@ def main(argv=None):
     s.add_argument("--no-fetch", action="store_true", help="홈페이지를 새로 받지 않음")
     s.add_argument("--workers", type=int, default=4)
 
+    s = sp.add_parser("events", help="전시회·행사 참가기업 (KIMES·KIMES BUSAN·헬스케어위크·REHA·KHF 특별관·BIO KOREA)")
+    s.add_argument("--only", nargs="*", choices=list(events.SOURCES))
+    s.add_argument("--dry-run", action="store_true", help="data/sources_dryrun_*.md 만 쓰고 DB 반영 안 함")
+
+    s = sp.add_parser("directories", help="기관 디렉토리 (캠퍼스타운·KDDF·바이오협회 신규회원·KoTHEA·넥스트유니콘)")
+    s.add_argument("--only", nargs="*", choices=list(directories.SOURCES))
+    s.add_argument("--dry-run", action="store_true", help="data/sources_dryrun_*.md 만 쓰고 DB 반영 안 함")
+
     s = sp.add_parser("contacts", help="롱리스트 홈페이지에서 공개 연락 창구(메일·전화·문의 폼·SNS) 수집")
     s.add_argument("--dry-run", action="store_true", help="data/contacts_dryrun.md 만 쓰고 DB 반영 안 함")
     s.add_argument("--ids", type=int, nargs="*")
@@ -216,6 +224,10 @@ def main(argv=None):
             scope.run(con, a.redo)
         case "tags":
             payer_task.cli(con, a)
+        case "events":
+            events.run(con, a.only, a.dry_run)
+        case "directories":
+            directories.run(con, a.only, a.dry_run)
         case "contacts":
             contacts.run(con, a.dry_run, a.ids, a.limit, a.workers, a.load)
         case "cards":
