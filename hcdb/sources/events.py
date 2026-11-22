@@ -334,8 +334,67 @@ def run_comeup(con, dry_run=False) -> dict:
                   lambda x: f"COMEUP Stars {x['_year']}".strip(), dry_run)
 
 
+# ── 서울바이오허브 '입주사 뉴스' 게시판 — 입주기업 목록 경로(/front/introduction/)는 robots 금지라 쓰지 않는다 ──────
+BIOHUB = "https://www.seoulbiohub.kr/front/board/boardContentsList.do"
+_BIOHUB_NOT = re.compile(r"인터뷰|외\s*\d+|기업들|기획|칼럼|특집|^\d+$|스타트업|기업|다큐|더벨|동정|핵심가치|열전|이야기|"
+                         r"THE BIO|헬스케어$|의사들|의료기기$|\d{4}|CEO|뉴스|인사|포커스|리포트|탐방|현장|단독|이슈|트렌드|초대석|미래|전성시대|증권|소식|Hi-Start|보도자료|농업|\s.*\s")
+
+
+def run_biohub(con, dry_run=False) -> dict:
+    from ..fetch import http_post_form
+    items, page = [], 1
+    while page <= 100:
+        r = http_post_form(BIOHUB, {"miv_pageNo": str(page), "miv_pageSize": "10", "board_id": "21", "mode": "W",
+                                    "cate_id": "a4247413f49c4270b51cc8eb36f1b1c3"})
+        r.encoding = "utf-8"
+        rows = [re.sub(r"\s+", " ", tr.get_text(" ", strip=True))
+                for tr in BeautifulSoup(r.text, "html.parser").select("tbody tr")]
+        rows = [x for x in rows if "입주사 뉴스" in x]
+        if not rows:
+            break
+        for x in rows:
+            d = re.search(r"(\d{4})-\d{2}-\d{2}$", x)
+            head = re.match(r"^\d+\s+입주사 뉴스\s+((?:\[[^\]]+\]\s*)+)", x)
+            for n in re.findall(r"\[([^\]]+)\]", head.group(1) if head else ""):
+                if not _BIOHUB_NOT.search(n) and not is_org(n):
+                    items.append({"name": n, "kws": ["서울바이오허브"], "_year": d.group(1) if d else ""})
+        page += 1
+    print(f"서울바이오허브 입주사 뉴스 {page - 1}쪽에서 회사명 {len(items)}건")
+    return finish(con, "ev:biohub", "https://www.seoulbiohub.kr/front/board/boardContentsList.do?board_id=21", items,
+                  "서울바이오허브 입주사", dry_run)
+
+
+# ── MEDITEK 행사 리뷰 PDF 의 참가기관 표 ─────────────────────────────────────────
+_MEDITEK_NOT = re.compile(r"기술지주|특허법인|법무법인|파트너스|인베스트먼트|투자|머니투데이|경제$|컨설팅|진흥회|협회|"
+                          r"사업단|병원|산학협력단|기술원|연구원|기획평가원|기술연구원")
+
+
+def run_meditek_pdf(con, dry_run=False) -> dict:
+    import io
+
+    import pdfplumber
+    home = http_get("https://www.meditek.or.kr/").text
+    pdfs = sorted(set(re.findall(r'href="(https?://[^"]*meditek\.or\.kr/data/bbsData/[^"]+\.pdf)"', home)))
+    items = []
+    for url in pdfs:
+        with pdfplumber.open(io.BytesIO(http_get(url).content)) as doc:
+            for pg in doc.pages:
+                text = pg.extract_text() or ""
+                if "참가기관" not in text or "연번" not in text:
+                    continue
+                for line in text.splitlines():
+                    for name in re.findall(r"(?:^|\s)\d{1,3}\s+(.+?)(?=\s+\d{1,3}\s+|$)", line):
+                        name = name.strip()
+                        if (re.search(r"\(주\)|㈜|\(유\)|주식회사", name) or name.endswith("(주)")) \
+                                and not is_org(name) and not _MEDITEK_NOT.search(name):
+                            items.append({"name": name, "page": url})
+    print(f"MEDITEK 리뷰 PDF {len(pdfs)}개에서 참가 기업 {len(items)}곳")
+    return finish(con, "ev:meditek-pdf", "https://www.meditek.or.kr/", items, "MEDITEK 참가기업", dry_run)
+
+
 SOURCES = {"kimes": run_kimes, "kimesbusan": run_kimesbusan, "ghcw": run_ghcw, "reha": run_reha, "khf": run_khf,
-           "biokorea": run_biokorea, "meditek": run_meditek, "comeup": run_comeup}
+           "biokorea": run_biokorea, "meditek": run_meditek, "comeup": run_comeup,
+           "biohub": run_biohub, "meditek_pdf": run_meditek_pdf}
 
 
 def run(con, only=None, dry_run=False) -> list[dict]:
