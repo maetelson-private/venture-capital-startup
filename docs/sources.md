@@ -56,6 +56,23 @@
 | 스타트업 언론 RSS 6곳 + 과거 기사 | `feeds` (Claude 필요) |
 | 세부 분야별 '○○ 스타트업' 기사 (50개 분야) | `holding-news collect --set field` |
 
+### 6-1. 전시회·행사·디렉토리 (2026-11-22 추가, 점검 결과는 `docs/source_audit_20261122.md`)
+| 소스 | 명령 | 거르는 기준 |
+|---|---|---|
+| KIMES / KIMES BUSAN 참가업체 API (사업자번호 포함) | `events --only kimes kimesbusan` | '스타트업' 배지 또는 의료IT 분류 |
+| 헬스케어위크(벡스코) 참가기업 (Flourish 표) | `events --only ghcw` | 복지·재활관, 화장품·식품 제외 |
+| REHA 홈케어·재활·복지전시회 | `events --only reha` | 케어테크·로봇·스마트 분류 |
+| K-HOSPITAL FAIR 특별관 (겨자씨키움센터·이노헬스랩·NIPA 등) | `events --only khf` | 로고 카드 형태 페이지만, 겨자씨관은 예비창업팀 |
+| BIO KOREA 참가업체 JSON (영문명 → 홈페이지 도메인으로 대조) | `events --only biokorea` | 한국 기업, 제약·의료기기·디지털헬스 |
+| 서울 캠퍼스타운 창업기업 (사업자번호·설립일·대표) | `directories --only campustown` | 사업분야 검색어: 헬스·의료·바이오 등 |
+| KDDF 국가신약개발사업 과제 | `directories --only kddf` | 기업 수행, 최근 3년 과제 |
+| 한국바이오협회 '[신규회원]' 글 | `directories --only koreabio` | 최근 3년 |
+| 범부처통합헬스케어협회(KoTHEA) 회원사 | `directories --only kothea` | 기관 제외 |
+| 넥스트유니콘 디지털헬스케어 테마 (투자 정보는 비공개라 안 씀) | `directories --only nextunicorn` | |
+| 올해의 K-스타트업 통합본선 (중기부 보도자료 PDF) | `directories --only kstartup` | 연도별 보도자료 주소를 `KSTARTUP_PAGES` 에 추가 |
+
+모든 명령에 `--dry-run` 이 있다 (`data/sources_dryrun_*.md` 에 새 회사 표만 씀).
+
 ### 7. 투자 (이미 투자받음 필터 겸 시드)
 | 소스 | 명령 |
 |---|---|

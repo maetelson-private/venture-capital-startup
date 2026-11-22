@@ -195,8 +195,42 @@ def run_nextunicorn(con, dry_run=False) -> dict:
                   "넥스트유니콘 디지털헬스케어", dry_run)
 
 
+# ── 올해의 K-스타트업 통합본선 (중기부 보도자료 붙임 표) ─────────────────────────
+# 보도자료 원문은 mss.go.kr, 같은 파일을 KDI 경제정보센터가 미러링한다(둘 다 robots 허용). 연도마다 num 을 바꿔 넣는다
+KSTARTUP_PAGES = {2026: "https://eiec.kdi.re.kr/policy/materialView.do?num=286632"}
+_KS_ROW = re.compile(r"^(?:최우수상|우수상|장려상|본선진출|대상)?\s*((?:㈜|\(주\)|주식회사)?\s*[^\s]+(?:\s[^\s]+)??(?:㈜)?)\s+([가-힣]{2,4})$")
+
+
+def run_kstartup(con, dry_run=False) -> dict:
+    import io
+
+    import pdfplumber
+    items = []
+    for year, page in KSTARTUP_PAGES.items():
+        html = http_get(page).text
+        links = re.findall(r'href="(/policy/callDownload\.do\?[^"]+)"', html)
+        if not links:
+            print(f"  올해의 K-스타트업 {year}: 첨부 못 찾음")
+            continue
+        pdf = http_get("https://eiec.kdi.re.kr" + links[0].replace("&amp;", "&")).content
+        with pdfplumber.open(io.BytesIO(pdf)) as doc:
+            for pg in doc.pages:
+                text = pg.extract_text() or ""
+                if "통합본선 진출기업" not in text:
+                    continue
+                league = re.search(r"｢(.+?)｣", text)
+                for line in text.splitlines():
+                    m = _KS_ROW.match(line.strip())
+                    if m and m.group(1) not in ("구분 기업명", "기업명", "솔루션", "대표자명"):
+                        items.append({"name": m.group(1), "ceo": m.group(2), "page": page,
+                                      "kws": [league.group(1)] if league else [], "_year": year})
+    print(f"올해의 K-스타트업 통합본선 진출기업 {len(items)}곳")
+    return finish(con, "dir:kstartup", "https://www.mss.go.kr/site/smba/ex/bbs/List.do?cbIdx=86", items,
+                  lambda x: f"올해의 K-스타트업 {x['_year']} 통합본선", dry_run)
+
+
 SOURCES = {"campustown": run_campustown, "kddf": run_kddf, "koreabio": run_koreabio, "kothea": run_kothea,
-           "nextunicorn": run_nextunicorn}
+           "nextunicorn": run_nextunicorn, "kstartup": run_kstartup}
 
 
 def run(con, only=None, dry_run=False) -> list[dict]:
