@@ -6,6 +6,7 @@ robots.txt 와 호스트별 간격(fetch.http_get)을 따른다. 키 불필요.
   --dry-run : data/contacts.json·data/contacts_dryrun.md 만 쓰고 DB 는 건드리지 않음
   (기본)    : companies.contact_channel 에 요약 한 줄 반영 (출처 'web-contact', 신뢰도 '중')
 """
+import html
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -359,11 +360,81 @@ def _verify(host: str, names: list[str]) -> str | None:
         title = _CORP_WORDS.sub("", raw_title).lower()
         text = _CORP_WORDS.sub("", soup.get_text(" ")).lower()
         for n in (n.lower() for n in names):
+            # 제목 안의 회사명은 앞뒤가 한글로 이어지면 안 된다 ('엠에스메디' ≠ '엠에스메디캠프', '네스트' ≠ '노르딕네스트')
+            if n in title and not re.search(rf"(^|[^가-힣]){re.escape(n)}($|[^가-힣])", title):
+                title = title.replace(n, "")
             # 제목에 회사명이 있으면 확정. 본문에만 있으면 4글자 이상 이름이 두 번 이상 나올 때만 (짧은 이름은 남의 사이트에도 흔함)
             if (n in title or (len(n) >= 4 and text.count(n) >= 2)) and _HEALTH_PAGE.search(text + " " + title):
                 return final
         return None  # 열리긴 했는데 회사명이 없다 → 다른 회사
     return None
+
+
+# ── 네이버 지역(업체) 검색: 사업장 등록명이 회사명과 똑같고 업종이 맞는 곳의 등록 링크 ─────────────────
+NAVER_LOCAL = "https://naverapihub.apigw.ntruss.com/search/v1/local"
+# 회사가 아닌 같은 이름 가게를 거르는 업종 (지역 검색은 상호만 같은 음식점·미용실·병의원이 많다)
+_LOCAL_BAD_CAT = re.compile(r"음식|술집|카페|미용|네일|쇼핑|패션|의류|건설|인쇄|부동산|숙박|여행|자동차|학원|교육|"
+                            r"병원|의원|치과|약국|스포츠|헬스장|요양원|사진|웨딩|반려|애견|꽃|인테리어|유학|종교|"
+                            r"주점|베이커리|식품|농업|축산|수산|운송|이사|세탁|청소|공연|숙소|펜션|노래")
+_SOCIAL_HOST = {"instagram.com": "instagram", "youtube.com": "youtube", "blog.naver.com": "blog",
+                "facebook.com": "facebook", "pf.kakao.com": "kakao", "linkedin.com": "linkedin"}
+_SIDO = {"서울": "서울", "부산": "부산", "대구": "대구", "인천": "인천", "광주": "광주", "대전": "대전", "울산": "울산",
+         "세종": "세종", "경기": "경기", "강원": "강원", "충북": "충청북", "충청북": "충청북", "충남": "충청남",
+         "충청남": "충청남", "전북": "전", "전라북": "전", "전남": "전라남", "전라남": "전라남", "경북": "경상북",
+         "경상북": "경상북", "경남": "경상남", "경상남": "경상남", "제주": "제주"}
+
+
+def _norm(s: str) -> str:
+    return _CORP_WORDS.sub("", re.sub(r"<.*?>", "", html.unescape(s or ""))).lower()
+
+
+def _sido_ok(sido: str | None, addr: str) -> bool | None:
+    """DB 소재지와 업체 주소가 같은 시도인지. DB 소재지가 없으면 None."""
+    if not sido:
+        return None
+    key = next((v for k, v in _SIDO.items() if sido.startswith(k)), sido[:2])
+    return addr.startswith(key) or addr.startswith(sido[:2])
+
+
+def find_local(cid: int, name: str, sido: str | None) -> dict:
+    res = {"id": cid, "name": name, "url": "", "social": "", "query": "local", "category": "", "addr": ""}
+    names = {_norm(n) for n in _names(name)}
+    try:
+        r = http_get(NAVER_LOCAL, params={"query": _CORP_WORDS.sub(" ", name).strip(), "display": 5},
+                     check_robots=False, headers={"X-NCP-APIGW-API-KEY-ID": config.NAVER_CLIENT_ID,
+                                                  "X-NCP-APIGW-API-KEY": config.NAVER_CLIENT_SECRET})
+        items = r.json().get("items", [])
+    except (requests.RequestException, ValueError, Blocked):
+        return res
+    hits = []
+    for it in items:
+        if _norm(it.get("title")) not in names or _LOCAL_BAD_CAT.search(it.get("category") or ""):
+            continue
+        addr = it.get("roadAddress") or it.get("address") or ""
+        ok = _sido_ok(sido, addr)
+        if ok is False:
+            continue
+        # 이름이 짧으면(한글 3자 미만) 소재지까지 맞아야
+        if ok is None and min(len(n) for n in names) < 3:
+            continue
+        hits.append(it)
+    links = {it.get("link") for it in hits if it.get("link")}
+    if not hits or len(links) > 1:  # 없거나, 같은 이름 업체가 서로 다른 링크를 갖고 있어 누군지 모름
+        return res
+    it = hits[0] if not links else next(h for h in hits if h.get("link"))
+    res.update(category=it.get("category", ""), addr=(it.get("roadAddress") or "")[:40])
+    link = (it.get("link") or "").strip()
+    if not link:
+        return res
+    host = urlparse(link if "://" in link else "http://" + link).netloc.lower().removeprefix("www.")
+    soc = next((v for k, v in _SOCIAL_HOST.items() if host.endswith(k)), None)
+    if soc:
+        res["social"] = f"{soc} {link}"
+    elif not _SKIP_HOST.search(host):
+        got = _get(link if "://" in link else "http://" + link)
+        if got:  # 열리는 곳만 (네이버 업체 등록 링크는 사업자가 직접 넣은 주소)
+            res["url"] = got[0]
+    return res
 
 
 def find_homepage(cid: int, name: str, summary: str) -> dict:
@@ -392,23 +463,38 @@ def find_homepage(cid: int, name: str, summary: str) -> dict:
 
 def run_find(con, ids=None, dry_run=False, workers=4) -> list[dict]:
     """롱리스트(하드필터 통과·범위 포함, 예비창업팀 제외) 중 홈페이지가 없는 곳."""
-    rows = con.execute("""SELECT id, name, service_summary FROM v_companies
+    rows = con.execute("""SELECT id, name, service_summary, sido FROM v_companies
                           WHERE hard_filter='통과' AND scope='포함' AND is_pre_startup=0
                           AND (url IS NULL OR url='') ORDER BY id""").fetchall()
     if ids:
         rows = [r for r in rows if r["id"] in set(ids)]
-    print(f"홈페이지 없는 롱리스트 {len(rows)}곳 네이버 웹문서 검색")
+    print(f"홈페이지 없는 롱리스트 {len(rows)}곳 네이버 지역(업체) 검색 → 못 찾으면 웹문서 검색")
+
+    def one(r):
+        loc = find_local(r["id"], r["name"], r["sido"])
+        if loc["url"]:
+            return loc
+        web = find_homepage(r["id"], r["name"], r["service_summary"] or "")
+        web.update(social=loc["social"], category=loc["category"], addr=loc["addr"])
+        return web
+
     out = []
     with ThreadPoolExecutor(workers) as ex:
-        for r in ex.map(lambda r: find_homepage(r["id"], r["name"], r["service_summary"] or ""), rows):
+        for r in ex.map(one, rows):
             out.append(r)
-            print(f"  [{len(out)}/{len(rows)}] {r['name']}: {r['url'] or '-'}")
+            print(f"  [{len(out)}/{len(rows)}] {r['name']}: {r['url'] or r.get('social') or '-'} ({r['query'][:20]})")
     (config.DATA_DIR / "homepages_found.json").write_text(json.dumps(out, ensure_ascii=False, indent=1),
                                                           encoding="utf-8")
     found = [r for r in out if r["url"]]
-    print(f"홈페이지 확인 {len(found)}곳 → data/homepages_found.json")
+    social = [r for r in out if not r["url"] and r.get("social")]
+    print(f"홈페이지 확인 {len(found)}곳, 홈페이지는 없고 SNS만 {len(social)}곳 → data/homepages_found.json")
     if not dry_run:
         for r in found:
-            db.set_field(con, r["id"], "url", r["url"], "naver-web", r["url"], "중")
+            db.set_field(con, r["id"], "url", r["url"], "naver-local" if r["query"] == "local" else "naver-web",
+                         r["url"], "중")
+        for r in social:  # 연락처가 비어 있을 때만 SNS 를 연락 수단으로
+            cur = con.execute("SELECT contact_channel FROM companies WHERE id=?", (r["id"],)).fetchone()[0]
+            if not cur:
+                db.set_field(con, r["id"], "contact_channel", r["social"], "naver-local", r["social"].split()[1], "중")
         con.commit()
     return found

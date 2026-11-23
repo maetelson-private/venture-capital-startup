@@ -125,7 +125,7 @@ def main(argv=None):
     s.add_argument("--workers", type=int, default=6)
     s.add_argument("--load", action="store_true", help="다시 크롤링하지 않고 data/contacts.json 을 DB 에 반영")
     s.add_argument("--find-homepages", action="store_true",
-                   help="홈페이지 없는 롱리스트 기업을 네이버 웹문서 검색으로 찾고(회사명 확인), 찾은 곳 연락처까지 수집")
+                   help="홈페이지 없는 롱리스트 기업을 네이버 지역(업체)·웹문서 검색으로 찾고(회사명 확인), 찾은 곳 연락처까지 수집")
 
     s = sp.add_parser("cards", help="롱리스트 카드 HTML (data/longlist.html)")
     s.add_argument("-o", "--out")

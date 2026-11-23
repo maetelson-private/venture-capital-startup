@@ -32,7 +32,7 @@ def _first_sentence(s: str | None, n: int = 70) -> str:
 # 출처 표시: field_evidence.source → 카드에 보일 이름. 판정·보강용(사람·Claude 판단, 규칙)은 '출처'가 아니라서 뺀다
 _NOT_SOURCE = {"claude-session", "rule", "llm-scope", "manual", "web-llm", "nts", "nps", "od:nps-founding",
                "kst-browser", "gist-browser", "snubh-browser", "enrich-web", "naver-news",
-               "web-contact"}
+               "web-contact", "naver-web", "naver-local"}
 SOURCE_LABELS = {
     "tips": "TIPS", "kbic": "KBIC", "dart": "DART", "dart-holdings": "기술지주 감사보고서(DART)",
     "news-llm": "언론 기사", "holding-news": "언론 기사", "briefing": "정책브리핑 보도자료",
