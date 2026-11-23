@@ -34,6 +34,7 @@ _NOT_SOURCE = {"claude-session", "rule", "llm-scope", "manual", "web-llm", "nts"
                "kst-browser", "gist-browser", "snubh-browser", "enrich-web", "naver-news",
                "web-contact", "naver-web", "naver-local"}
 SOURCE_LABELS = {
+    "web-search": "웹 검색(CEO 인터뷰·창업 기사)",
     "tips": "TIPS", "kbic": "KBIC", "dart": "DART", "dart-holdings": "기술지주 감사보고서(DART)",
     "news-llm": "언론 기사", "holding-news": "언론 기사", "briefing": "정책브리핑 보도자료",
     "notice:innov": "혁신의료기기 보도자료", "notice:sandbox": "규제샌드박스 보도자료", "notice:program": "선정 공고",
