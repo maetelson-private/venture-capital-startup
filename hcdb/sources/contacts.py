@@ -34,7 +34,7 @@ _OBF_RE = re.compile(r"([A-Za-z0-9._%+-]+)\s*(?:\[at\]|\(at\)|\{at\}| at |＠)\s
 _PHONE_RE = re.compile(r"(?<![\d-])(?:\+82[-.\s]?\(?0?\)?\s?)?(0\d{1,2}[-.)\s]\s?\d{3,4}[-.\s]\d{4}|1[5-9]\d{2}[-.\s]\d{4})(?![\d-])")
 _FAX_RE = re.compile(r"fax|팩스|F\s*[.:]", re.I)
 _BAD_EMAIL = re.compile(r"\.(png|jpe?g|gif|svg|webp|css|js)$|example\.|sentry|wixpress|domain\.com|email\.com|"
-                        r"yourmail|@2x|godaddy|cafe24\.com$|sample|test@|user@|name@", re.I)
+                        r"yourmail|@2x|godaddy|cafe24\.com$|sample|test@|user@|name@|^0+@|@0+\.", re.I)
 _SOCIAL = {
     "linkedin": re.compile(r"linkedin\.com/(company|school|showcase)/[^/?#\s\"']+", re.I),
     "kakao": re.compile(r"pf\.kakao\.com/[^/?#\s\"']+", re.I),
@@ -156,6 +156,51 @@ def _norm_phone(p: str) -> str:
     return f"{d[:3]}-{d[3:-4]}-{d[-4:]}"
 
 
+# 메뉴가 JS 로만 그려져 링크를 못 찾는 사이트용: 흔한 회사소개·연락처 주소
+_COMMON_PATHS = ("contact", "contact-us", "contactus", "about", "about-us", "company", "kr/contact", "ko/contact",
+                 "sub/contact.php", "company/contact", "support", "kor/contact", "intro")
+
+
+def _deep(final: str, seen: set) -> dict:
+    """첫 화면·하위 페이지에서 연락처를 못 찾았을 때: 브라우저로 첫 화면을 그려 하위 링크를 다시 찾고
+    (최대 3개 렌더링), 그래도 없으면 흔한 연락처 주소를 직접 열어 본다. robots 는 render·http_get 이 확인."""
+    agg = {"emails": set(), "phones": set(), "forms": set(), "social": {}, "pages": []}
+
+    def add(e, page):
+        agg["emails"] |= e["emails"]
+        agg["phones"] |= e["phones"]
+        agg["forms"] |= e["forms"]
+        for k, v in e["social"].items():
+            agg["social"].setdefault(k, v)
+        agg["pages"].append(page)
+
+    def found():
+        return agg["emails"] or agg["phones"] or agg["forms"] or agg["social"]
+
+    subs = []
+    try:
+        e = extract(render(final), final)
+        add(e, final + " (렌더링)")
+        subs = [u for u in dict.fromkeys(e["subpages"]) if u not in seen][:3]
+    except Exception:  # noqa: BLE001
+        pass
+    for u in subs:
+        if found():
+            break
+        try:
+            add(extract(render(u), u), u + " (렌더링)")
+        except Exception:  # noqa: BLE001
+            pass
+    base = f"{urlparse(final).scheme}://{urlparse(final).netloc}/"
+    for path in _COMMON_PATHS:
+        if found():
+            break
+        g = _get(urljoin(base, path))
+        if g and urlparse(g[0]).path.strip("/") not in ("", urlparse(final).path.strip("/")):
+            add(extract(g[1], g[0]), g[0])
+    return agg
+
+
 def crawl(cid: int, name: str, url: str) -> dict:
     res = {"id": cid, "name": name, "url": url, "status": "ok", "pages": [],
            "emails": [], "phones": [], "forms": [], "social": {}}
@@ -177,6 +222,13 @@ def crawl(cid: int, name: str, url: str) -> dict:
         res["status"] = ("실패: " + _why(start, why)) if start else "URL 형식 오류"
         return res
     final, html = got
+    # 프레임으로 감싼 옛 홈페이지: 같은 사이트의 frame/iframe 본문을 붙인다
+    for src in re.findall(r"<i?frame[^>]+src=[\"']([^\"']+)", html, re.I)[:3]:
+        fu = urljoin(final, src)
+        if urlparse(fu).netloc.removeprefix("www.") == urlparse(final).netloc.removeprefix("www."):
+            g = _get(fu)
+            if g:
+                html += g[1]
     res["pages"].append(final)
     agg = extract(html, final)
     emails, phones, forms, social = set(agg["emails"]), set(agg["phones"]), set(agg["forms"]), dict(agg["social"])
@@ -200,16 +252,12 @@ def crawl(cid: int, name: str, url: str) -> dict:
     res["social"] = social
     if not (emails or phones or forms or social):
         # JS 로 그리는 화면일 수 있어 브라우저로 한 번 더 (robots 는 render 가 확인)
-        try:
-            rh = render(final)
-            e = extract(rh, final)
-            res["emails"] = sorted(e["emails"], key=lambda x: (not _GENERIC.match(x), x))
-            res["phones"] = sorted({_norm_phone(p) for p in e["phones"]})
-            res["forms"] = sorted(e["forms"])[:3]
-            res["social"] = e["social"]
-            res["pages"].append(final + " (렌더링)")
-        except Exception:  # noqa: BLE001
-            pass
+        e = _deep(final, seen)
+        res["emails"] = sorted(e["emails"], key=lambda x: (not _GENERIC.match(x), x))
+        res["phones"] = sorted({_norm_phone(p) for p in e["phones"]})
+        res["forms"] = sorted(e["forms"])[:3]
+        res["social"] = e["social"]
+        res["pages"] += e["pages"]
         if not (res["emails"] or res["phones"] or res["forms"] or res["social"]):
             res["status"] = "연락처 못 찾음"
     return res

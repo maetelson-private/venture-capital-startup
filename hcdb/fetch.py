@@ -94,10 +94,21 @@ def render(url: str, wait_selector: str | None = None) -> str:
     with sync_playwright() as p:
         b = p.chromium.launch()
         page = b.new_page(user_agent=config.USER_AGENT)
-        page.goto(url, wait_until="networkidle", timeout=30000)
+        try:
+            page.goto(url, wait_until="networkidle", timeout=30000)
+        except Exception as e:  # noqa: BLE001  광고·채팅 위젯이 계속 통신하면 networkidle 이 안 온다 → 그려진 만큼 쓴다
+            if "Timeout" not in type(e).__name__:
+                b.close()
+                raise
+            page.wait_for_timeout(2000)
         if wait_selector:
             page.wait_for_selector(wait_selector, timeout=10000)
         html = page.content()
+        for f in page.frames[1:]:  # iframe 안 내용(옛 홈페이지는 본문이 프레임에 있다)
+            try:
+                html += f.content()
+            except Exception:  # noqa: BLE001
+                pass
         b.close()
     return html
 
